@@ -1,0 +1,40 @@
+# macOS 本地元数据文件。
+.DS_Store
+
+# 临时目录和 TypeScript 构建产物。
+/tmp
+/out-tsc
+/dist
+
+# Node.js 依赖和包管理器日志。
+/node_modules
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+/.pnp
+.pnp.js
+
+# 本地环境变量文件，保留示例配置。
+.env
+.env.*
+!.env.example
+
+# 本地数据库文件。
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+
+# 应用运行时数据、浏览器 profile 和测试报告。
+/data
+/storage
+/browser-profiles
+/playwright-report
+/test-results
+
+# 暂时不提交的项目说明文档。
+/docs/architecture.md
+
+# IDE 本地配置。
+.idea
+.vscode
