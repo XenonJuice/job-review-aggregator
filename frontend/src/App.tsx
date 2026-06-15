@@ -14,6 +14,7 @@ import {
   createAnalysis,
   getHistory,
   getSites,
+  openSiteLogin,
   SearchHistory,
   Site,
   SiteId,
@@ -29,6 +30,8 @@ export default function App() {
   const [searches, setSearches] = useState<SearchHistory[]>([]);
   const [analyses, setAnalyses] = useState<AnalysisHistory[]>([]);
   const [loading, setLoading] = useState(false);
+  const [openingSiteId, setOpeningSiteId] = useState<SiteId>();
+  const [siteMessage, setSiteMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -73,14 +76,27 @@ export default function App() {
     }
   }
 
-  function toggleSite(siteId: SiteId) {
-    setSelectedSiteIds((current) => {
-      if (current.includes(siteId)) {
-        return current.filter((id) => id !== siteId);
-      }
+  // 网站选项同时承担选择与登录入口：确保站点选中后再请求后台打开浏览器。
+  async function handleSiteClick(siteId: SiteId) {
+    setSelectedSiteIds((current) =>
+      current.includes(siteId) ? current : [...current, siteId],
+    );
+    setOpeningSiteId(siteId);
+    setSiteMessage('');
+    setError('');
 
-      return [...current, siteId];
-    });
+    try {
+      const result = await openSiteLogin(siteId);
+      setSiteMessage(
+        result.status === 'opened'
+          ? 'Chromium 已打开，请在窗口中完成登录。'
+          : '已切换到现有 Chromium 窗口。',
+      );
+    } catch (loginError) {
+      setError(toErrorMessage(loginError));
+    } finally {
+      setOpeningSiteId(undefined);
+    }
   }
 
   return (
@@ -137,18 +153,29 @@ export default function App() {
                           : 'site-option'
                       }
                       key={site.id}
-                      onClick={() => toggleSite(site.id)}
+                      disabled={openingSiteId === site.id}
+                      onClick={() => void handleSiteClick(site.id)}
                       type="button"
                     >
-                      <img
-                        alt=""
-                        className="site-option-icon"
-                        src={tenshokuKaigiIcon}
-                      />
-                      {site.displayName}
+                      {openingSiteId === site.id ? (
+                        <LoaderCircle className="spin" size={24} />
+                      ) : (
+                        <img
+                          alt=""
+                          className="site-option-icon"
+                          src={tenshokuKaigiIcon}
+                        />
+                      )}
+                      <span>
+                        {site.displayName}
+                        <small>点击打开登录窗口</small>
+                      </span>
                     </button>
                   ))}
                 </div>
+                {siteMessage ? (
+                  <p className="site-message">{siteMessage}</p>
+                ) : null}
               </div>
 
               <label className="page-field">

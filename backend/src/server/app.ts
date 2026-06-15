@@ -4,6 +4,7 @@ import {
   MvpWorkflowRequest,
   MvpWorkflowResult,
 } from '../app/mvpWorkflow';
+import { BrowserLoginService } from '../browser/playwrightLoginService';
 import { SiteId } from '../domain/types';
 import { ReviewRepository } from '../storage/repository';
 
@@ -14,6 +15,7 @@ interface WorkflowRunner {
 export interface ApiDependencies {
   workflow: WorkflowRunner;
   repository: ReviewRepository;
+  browserLogin: BrowserLoginService;
 }
 
 const AVAILABLE_SITES = [
@@ -35,6 +37,19 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
 
   app.get('/api/sites', (_request, response) => {
     response.json({ sites: AVAILABLE_SITES });
+  });
+
+  // 前端点击站点选项时调用，由本机后台启动或聚焦持久化 Chromium。
+  app.post('/api/sites/:siteId/login', async (request, response) => {
+    const siteId = parseAvailableSiteId(request.params.siteId);
+
+    if (!siteId) {
+      response.status(404).json({ error: 'Unsupported site' });
+      return;
+    }
+
+    const result = await dependencies.browserLogin.open(siteId);
+    response.json(result);
   });
 
   app.post('/api/analyses', async (request, response) => {
@@ -149,6 +164,10 @@ function parseSelectedSiteIds(value: unknown): SiteId[] | undefined {
   }
 
   return value;
+}
+
+function parseAvailableSiteId(value: string): SiteId | undefined {
+  return AVAILABLE_SITES.find((site) => site.id === value)?.id;
 }
 
 function parseHistoryLimit(value: unknown): number {

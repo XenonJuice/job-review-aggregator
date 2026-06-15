@@ -195,6 +195,23 @@ main {
   border-radius: 11px;
 }
 
+.site-option:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+
+.site-option span {
+  display: grid;
+  gap: 1px;
+  text-align: left;
+}
+
+.site-option small {
+  color: #8b9591;
+  font-size: 9px;
+  font-weight: 500;
+}
+
 .site-option.selected {
   color: #173c35;
   background: #e9f1ed;
@@ -205,6 +222,12 @@ main {
   width: 24px;
   height: 24px;
   object-fit: contain;
+}
+
+.site-message {
+  margin: 8px 0 0;
+  color: #477267;
+  font-size: 11px;
 }
 
 .page-field select {

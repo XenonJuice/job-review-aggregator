@@ -46,6 +46,15 @@ export async function getSites(): Promise<Site[]> {
   return result.sites;
 }
 
+// 请求本机后台打开站点登录窗口；浏览器本身不在前端页面进程中启动。
+export async function openSiteLogin(
+  siteId: SiteId,
+): Promise<{ siteId: SiteId; status: 'opened' | 'focused' }> {
+  return request(`/api/sites/${siteId}/login`, {
+    method: 'POST',
+  });
+}
+
 export async function createAnalysis(input: {
   companyQuery: string;
   selectedSiteIds: SiteId[];

@@ -24,7 +24,19 @@ test('API runs an analysis and exposes persisted history', async (context) => {
     repository,
     new MockAiProvider(),
   );
-  const server = createApiApp({ workflow, repository }).listen(0);
+  // API 测试用轻量替身记录调用，避免自动化测试真的打开 Chromium。
+  const browserLoginCalls = [];
+  const browserLogin = {
+    async open(siteId) {
+      browserLoginCalls.push(siteId);
+      return { siteId, status: 'opened' };
+    },
+  };
+  const server = createApiApp({
+    workflow,
+    repository,
+    browserLogin,
+  }).listen(0);
 
   await once(server, 'listening');
   context.after(() => new Promise((resolve) => server.close(resolve)));
@@ -42,6 +54,17 @@ test('API runs an analysis and exposes persisted history', async (context) => {
   assert.deepEqual(await sitesResponse.json(), {
     sites: [{ id: 'tenshoku-kaigi', displayName: '転職会議' }],
   });
+
+  const loginResponse = await fetch(
+    `${baseUrl}/api/sites/tenshoku-kaigi/login`,
+    { method: 'POST' },
+  );
+  assert.equal(loginResponse.status, 200);
+  assert.deepEqual(await loginResponse.json(), {
+    siteId: 'tenshoku-kaigi',
+    status: 'opened',
+  });
+  assert.deepEqual(browserLoginCalls, ['tenshoku-kaigi']);
 
   const invalidResponse = await fetch(`${baseUrl}/api/analyses`, {
     method: 'POST',
