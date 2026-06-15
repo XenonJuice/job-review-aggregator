@@ -43,7 +43,7 @@ export class SystemChromeLoginService implements BrowserLoginService {
 
     await access(GOOGLE_CHROME_PATH);
 
-    // 使用项目专用 profile 启动正常 Chrome；登录后 Cookie 会留在该目录供后续抓取复用。
+    // 使用完全普通的 Chrome 登录，不附加自动化或远程调试参数。
     const chrome = spawn(
       GOOGLE_CHROME_PATH,
       [

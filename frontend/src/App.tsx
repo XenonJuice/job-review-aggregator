@@ -89,8 +89,8 @@ export default function App() {
       const result = await openSiteLogin(siteId);
       setSiteMessage(
         result.status === 'opened'
-          ? 'Google Chrome 已打开。请完成 Google 登录，登录成功后关闭该 Chrome 窗口。'
-          : '已切换到现有 Google Chrome 窗口。',
+          ? '普通 Google Chrome 已打开。公开评价无需登录，会员页面采集将在后续扩展中接入。'
+          : 'Google Chrome 已打开。',
       );
     } catch (loginError) {
       setError(toErrorMessage(loginError));
@@ -168,7 +168,7 @@ export default function App() {
                       )}
                       <span>
                         {site.displayName}
-                        <small>点击打开登录窗口</small>
+                        <small>会员登录（可选）</small>
                       </span>
                     </button>
                   ))}

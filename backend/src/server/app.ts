@@ -6,6 +6,7 @@ import {
 } from '../app/mvpWorkflow';
 import { BrowserLoginService } from '../browser/playwrightLoginService';
 import { SiteId } from '../domain/types';
+import { SiteLoginRequiredError } from '../sites/siteErrors';
 import { ReviewRepository } from '../storage/repository';
 
 interface WorkflowRunner {
@@ -87,6 +88,11 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
       response: Response,
       _next: NextFunction,
     ) => {
+      if (error instanceof SiteLoginRequiredError) {
+        response.status(error.statusCode).json({ error: error.message });
+        return;
+      }
+
       console.error(error);
       response.status(500).json({ error: 'Internal server error' });
     },
