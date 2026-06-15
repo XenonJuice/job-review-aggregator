@@ -2,7 +2,6 @@ import { FormEvent, useEffect, useState } from 'react';
 import {
   ArrowRight,
   Building2,
-  CheckCircle2,
   Clock3,
   Database,
   LoaderCircle,
@@ -19,6 +18,7 @@ import {
   Site,
   SiteId,
 } from './api';
+import tenshokuKaigiIcon from '../pic-resource/tensyokukaigi.png';
 
 export default function App() {
   const [companyQuery, setCompanyQuery] = useState('富士ソフト');
@@ -140,7 +140,11 @@ export default function App() {
                       onClick={() => toggleSite(site.id)}
                       type="button"
                     >
-                      <CheckCircle2 size={16} />
+                      <img
+                        alt=""
+                        className="site-option-icon"
+                        src={tenshokuKaigiIcon}
+                      />
                       {site.displayName}
                     </button>
                   ))}

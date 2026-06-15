@@ -201,6 +201,12 @@ main {
   border-color: #9ab8af;
 }
 
+.site-option-icon {
+  width: 24px;
+  height: 24px;
+  object-fit: contain;
+}
+
 .page-field select {
   width: 100%;
   padding: 10px 12px;
