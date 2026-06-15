@@ -4,17 +4,17 @@ import { FileSystemBrowserSessionStore } from './browser/session';
 import { loadAppConfig } from './config/appConfig';
 import { exportMarkdownReport } from './export/markdownExporter';
 import { TenshokuKaigiPlugin } from './sites/tenshokuKaigi';
-import { InMemoryReviewRepository } from './storage/repository';
+import { SQLiteReviewRepository } from './storage/sqliteRepository';
 
 // CLI 入口用于在没有前端时验证 MVP 的端到端数据流。
 async function main(): Promise<void> {
   const config = loadAppConfig(process.argv.slice(2));
 
-  // 组合依赖：一个站点插件、文件系统会话、内存仓库和 Mock AI。
+  // 组合依赖：一个站点插件、文件系统会话、SQLite 仓库和 Mock AI。
   const workflow = new MvpWorkflow(
     [new TenshokuKaigiPlugin()],
     new FileSystemBrowserSessionStore(config.browserProfileDir),
-    new InMemoryReviewRepository(),
+    new SQLiteReviewRepository(config.dbPath),
     new MockAiProvider(),
   );
 
@@ -39,6 +39,7 @@ async function main(): Promise<void> {
   console.log(`sites: ${config.selectedSiteIds.join(', ')}`);
   console.log(`reviews: ${result.reviews.length}`);
   console.log(`browser profile dir: ${config.browserProfileDir}`);
+  console.log(`database: ${config.dbPath}`);
   if (config.exportMarkdownPath) {
     console.log(`markdown report: ${config.exportMarkdownPath}`);
   }

@@ -101,6 +101,9 @@ function assignCliOption(options: CliOptions, key: string, value: string | undef
     case 'export-md':
       options.exportMarkdown = value;
       break;
+    case 'db':
+      options.db = value;
+      break;
     default:
       break;
   }
