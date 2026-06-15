@@ -56,6 +56,7 @@ export async function analyzeCompany(request: AnalysisRequest): Promise<CompanyA
   // 当前 MVP 先复用原始输出填充所有板块，真实解析器会拆成独立字段。
   return {
     company: request.company,
+    provider: request.provider.name,
     sources: Array.from(sourceSet),
     overallSummary: rawProviderOutput,
     interviewSummary: rawProviderOutput,

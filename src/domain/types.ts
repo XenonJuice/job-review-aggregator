@@ -62,6 +62,7 @@ export interface CompanyReview {
 // AI 分析结果结构，前端报告页和导出功能都围绕这个对象渲染。
 export interface CompanyAnalysis {
   company: string;
+  provider: string;
   sources: string[];
   overallSummary: string;
   interviewSummary: string;
