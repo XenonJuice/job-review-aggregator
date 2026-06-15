@@ -75,13 +75,24 @@ export async function getHistory(): Promise<{
 
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const response = await fetch(url, init);
-  const body = (await response.json()) as T | { error?: string };
+  const body: unknown = await response.json();
 
   if (!response.ok) {
-    const message =
-      'error' in body && body.error ? body.error : '请求失败，请稍后重试';
-    throw new Error(message);
+    throw new Error(getErrorMessage(body));
   }
 
   return body as T;
+}
+
+function getErrorMessage(body: unknown): string {
+  if (
+    typeof body === 'object' &&
+    body !== null &&
+    'error' in body &&
+    typeof body.error === 'string'
+  ) {
+    return body.error;
+  }
+
+  return '请求失败，请稍后重试';
 }
