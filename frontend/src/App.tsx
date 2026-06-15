@@ -89,8 +89,8 @@ export default function App() {
       const result = await openSiteLogin(siteId);
       setSiteMessage(
         result.status === 'opened'
-          ? 'Chromium 已打开，请在窗口中完成登录。'
-          : '已切换到现有 Chromium 窗口。',
+          ? 'Google Chrome 已打开。请完成 Google 登录，登录成功后关闭该 Chrome 窗口。'
+          : '已切换到现有 Google Chrome 窗口。',
       );
     } catch (loginError) {
       setError(toErrorMessage(loginError));

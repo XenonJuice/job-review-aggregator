@@ -1,8 +1,8 @@
 import path from 'node:path';
 import { MockAiProvider } from '../ai/providers/mockAiProvider';
 import { MvpWorkflow } from '../app/mvpWorkflow';
-import { PlaywrightBrowserLoginService } from '../browser/playwrightLoginService';
 import { FileSystemBrowserSessionStore } from '../browser/session';
+import { SystemChromeLoginService } from '../browser/systemChromeLoginService';
 import { TenshokuKaigiPlugin } from '../sites/tenshokuKaigi';
 import { SQLiteReviewRepository } from '../storage/sqliteRepository';
 import { createApiApp } from './app';
@@ -22,7 +22,8 @@ const workflow = new MvpWorkflow(
   repository,
   new MockAiProvider(),
 );
-const browserLogin = new PlaywrightBrowserLoginService(sessions);
+// 登录使用普通 Chrome，避免 Google OAuth 拒绝受 Playwright 控制的浏览器。
+const browserLogin = new SystemChromeLoginService(sessions);
 const app = createApiApp({ workflow, repository, browserLogin });
 
 app.listen(port, () => {
