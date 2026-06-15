@@ -28,7 +28,7 @@ export class SQLiteReviewRepository implements ReviewRepository {
 
   constructor(
     private readonly dbPath: string,
-    schemaPath = path.resolve('src/storage/schema.sql'),
+    schemaPath = path.resolve('backend/src/storage/schema.sql'),
   ) {
     mkdirSync(path.dirname(dbPath), { recursive: true });
     this.db = new DatabaseSync(dbPath);

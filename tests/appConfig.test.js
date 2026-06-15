@@ -1,7 +1,7 @@
 const assert = require('node:assert/strict');
 const path = require('node:path');
 const test = require('node:test');
-const { loadAppConfig } = require('../dist/config/appConfig');
+const { loadAppConfig } = require('../dist/backend/config/appConfig');
 
 test('loadAppConfig returns local defaults', () => {
   const config = loadAppConfig([]);

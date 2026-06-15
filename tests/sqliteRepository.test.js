@@ -3,7 +3,9 @@ const { mkdtempSync } = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const test = require('node:test');
-const { SQLiteReviewRepository } = require('../dist/storage/sqliteRepository');
+const {
+  SQLiteReviewRepository,
+} = require('../dist/backend/storage/sqliteRepository');
 
 test('SQLiteReviewRepository persists search and analysis history', async () => {
   const tempDir = mkdtempSync(path.join(os.tmpdir(), 'job-review-'));

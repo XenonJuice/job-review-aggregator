@@ -1,12 +1,20 @@
 const assert = require('node:assert/strict');
 const { once } = require('node:events');
 const test = require('node:test');
-const { MockAiProvider } = require('../dist/ai/providers/mockAiProvider');
-const { MvpWorkflow } = require('../dist/app/mvpWorkflow');
-const { InMemoryBrowserSessionStore } = require('../dist/browser/session');
-const { createApiApp } = require('../dist/server/app');
-const { TenshokuKaigiPlugin } = require('../dist/sites/tenshokuKaigi');
-const { InMemoryReviewRepository } = require('../dist/storage/repository');
+const {
+  MockAiProvider,
+} = require('../dist/backend/ai/providers/mockAiProvider');
+const { MvpWorkflow } = require('../dist/backend/app/mvpWorkflow');
+const {
+  InMemoryBrowserSessionStore,
+} = require('../dist/backend/browser/session');
+const { createApiApp } = require('../dist/backend/server/app');
+const {
+  TenshokuKaigiPlugin,
+} = require('../dist/backend/sites/tenshokuKaigi');
+const {
+  InMemoryReviewRepository,
+} = require('../dist/backend/storage/repository');
 
 test('API runs an analysis and exposes persisted history', async (context) => {
   const repository = new InMemoryReviewRepository();
