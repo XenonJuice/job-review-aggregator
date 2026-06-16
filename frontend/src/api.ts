@@ -60,10 +60,6 @@ export interface DesktopBridge {
     companyQuery: string;
     maxPages: number;
   }): Promise<DesktopCollectResult>;
-  collectTenshokuKaigi(input: {
-    companyQuery: string;
-    maxPages: number;
-  }): Promise<DesktopCollectResult>;
   getSettings(): Promise<DesktopSettings>;
   saveSettings(settings: DesktopSettings): Promise<DesktopSettings>;
   clearLoginCache(): Promise<{ ok: true }>;

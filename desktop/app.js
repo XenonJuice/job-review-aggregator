@@ -15,8 +15,7 @@ const DESKTOP_SITE_COLLECTORS = {
     parser: JobTalkParser,
   },
 };
-const DEFAULT_SITE_ID = 'tenshoku-kaigi';
-const DEFAULT_SITE = getDesktopSite(DEFAULT_SITE_ID);
+const DEFAULT_SITE = getDefaultDesktopSite();
 let localApiBaseUrl = 'http://127.0.0.1:3000';
 let mainWindow;
 let integratedListener;
@@ -30,6 +29,8 @@ class LoginRequiredError extends Error {
 
 app.setName('Job Review Aggregator');
 
+// 尝试获取单实例锁，
+// 防止同一个electron app同时开多个进程实例导致状态混乱
 const gotSingleInstanceLock = app.requestSingleInstanceLock();
 
 if (!gotSingleInstanceLock) {
@@ -39,6 +40,13 @@ if (!gotSingleInstanceLock) {
   registerAppLifecycleHandlers();
 }
 
+/**
+ * 注册 Electron 主进程的生命周期事件。
+ * - second-instance：重复启动应用时，唤起并聚焦已存在的主窗口
+ * - whenReady：应用初始化完成后创建主窗口
+ * - activate：应用被重新激活时，创建或聚焦主窗口
+ * - window-all-closed：所有窗口关闭后退出应用
+ */
 function registerAppLifecycleHandlers() {
   app.on('second-instance', () => {
     if (mainWindow) {
@@ -74,16 +82,18 @@ function registerAppLifecycleHandlers() {
   });
 }
 
+/**
+ * 注册渲染进程可调用的 IPC 处理器。
+ * IPC 处理器是 Electron 主进程里“接收前端请求并执行对应操作”的函数。
+ * - collect-site-reviews：按传入的 siteId 打开站点采集窗口并导入评论
+ * - import-reviews：导入已采集的评论数据
+ * - get-settings / save-settings：读取和保存本地设置
+ * - clear-login-cache：清除 Electron 会话中的登录缓存
+ * - clear-database：校验确认文本后清空本地数据库
+ */
 function registerIpcHandlers() {
   ipcMain.handle('collect-site-reviews', (_event, input) => {
     return openCollectorWindow(input);
-  });
-
-  ipcMain.handle('collect-tenshoku-kaigi', (_event, input) => {
-    return openCollectorWindow({
-      ...input,
-      siteId: DEFAULT_SITE_ID,
-    });
   });
 
   ipcMain.handle('import-reviews', async (_event, payload) => {
@@ -470,11 +480,27 @@ async function showCollectorStatus(window, message) {
   `);
 }
 
-function getDesktopSite(siteId = DEFAULT_SITE_ID) {
-  const site = DESKTOP_SITE_COLLECTORS[siteId];
+function getDesktopSite(siteId) {
+  const normalizedSiteId = String(siteId ?? '').trim();
+
+  if (!normalizedSiteId) {
+    throw new Error('请选择评价网站。');
+  }
+
+  const site = DESKTOP_SITE_COLLECTORS[normalizedSiteId];
 
   if (!site) {
-    throw new Error(`暂不支持该网站的桌面采集：${siteId}`);
+    throw new Error(`暂不支持该网站的桌面采集：${normalizedSiteId}`);
+  }
+
+  return site;
+}
+
+function getDefaultDesktopSite() {
+  const [site] = Object.values(DESKTOP_SITE_COLLECTORS);
+
+  if (!site) {
+    throw new Error('未配置桌面采集网站。');
   }
 
   return site;
@@ -511,6 +537,12 @@ function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
+/**
+ * 将启动阶段捕获到的异常写入 Electron userData 目录下的 startup-error.log。
+ * 优先记录错误堆栈，便于排查主窗口创建或内置服务启动失败的原因。
+ *
+ * @param {unknown} error 启动过程中捕获到的异常或错误信息。
+ */
 function logStartupError(error) {
   const logPath = path.join(app.getPath('userData'), 'startup-error.log');
   const message = error instanceof Error ? error.stack ?? error.message : String(error);
