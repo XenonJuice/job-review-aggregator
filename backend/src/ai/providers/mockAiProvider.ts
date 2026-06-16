@@ -1,6 +1,6 @@
 import { AiProvider } from '../provider';
 
-// Mock Provider 不访问外部网络，用于验证本地 MVP 数据流。
+// Mock Provider 不访问外部网络，用于验证本地数据流。
 export class MockAiProvider implements AiProvider {
   readonly name = 'mock';
 
