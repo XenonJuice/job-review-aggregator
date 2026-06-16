@@ -5,17 +5,19 @@ const path = require('node:path');
 const JobTalkParser = require('./jobtalkParser');
 
 const FRONTEND_URL = process.env.FRONTEND_URL;
-const SITES = {
+const DESKTOP_SITE_COLLECTORS = {
   'tenshoku-kaigi': {
     id: 'tenshoku-kaigi',
     displayName: '転職会議',
     baseUrl: 'https://jobtalk.jp',
     homeUrl: 'https://jobtalk.jp/',
     importPath: '/api/imports/tenshoku-kaigi',
+    parser: JobTalkParser,
   },
 };
-const DEFAULT_SITE = SITES['tenshoku-kaigi'];
-let localImportUrl = `http://127.0.0.1:3000${DEFAULT_SITE.importPath}`;
+const DEFAULT_SITE_ID = 'tenshoku-kaigi';
+const DEFAULT_SITE = getDesktopSite(DEFAULT_SITE_ID);
+let localApiBaseUrl = 'http://127.0.0.1:3000';
 let mainWindow;
 let integratedListener;
 let activeRepository;
@@ -24,6 +26,107 @@ class LoginRequiredError extends Error {
   constructor(site = DEFAULT_SITE) {
     super(`请在弹出的${site.displayName}窗口中完成登录。登录完成后会自动继续采集。`);
   }
+}
+
+app.setName('Job Review Aggregator');
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+} else {
+  registerIpcHandlers();
+  registerAppLifecycleHandlers();
+}
+
+function registerAppLifecycleHandlers() {
+  app.on('second-instance', () => {
+    if (mainWindow) {
+      if (mainWindow.isMinimized()) {
+        mainWindow.restore();
+      }
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
+  app.whenReady().then(() => {
+    createMainWindow().catch((error) => {
+      logStartupError(error);
+      app.quit();
+    });
+  });
+
+  app.on('activate', () => {
+    if (!mainWindow) {
+      createMainWindow().catch((error) => {
+        logStartupError(error);
+        app.quit();
+      });
+    } else {
+      mainWindow.show();
+      mainWindow.focus();
+    }
+  });
+
+  app.on('window-all-closed', () => {
+    app.quit();
+  });
+}
+
+function registerIpcHandlers() {
+  ipcMain.handle('collect-site-reviews', (_event, input) => {
+    return openCollectorWindow(input);
+  });
+
+  ipcMain.handle('collect-tenshoku-kaigi', (_event, input) => {
+    return openCollectorWindow({
+      ...input,
+      siteId: DEFAULT_SITE_ID,
+    });
+  });
+
+  ipcMain.handle('import-reviews', async (_event, payload) => {
+    return importReviews(payload);
+  });
+
+  ipcMain.handle('get-settings', () => {
+    return readSettings();
+  });
+
+  ipcMain.handle('save-settings', (_event, settings) => {
+    const nextSettings = sanitizeSettings(settings);
+    writeFileSync(getSettingsPath(), `${JSON.stringify(nextSettings, null, 2)}\n`);
+    return nextSettings;
+  });
+
+  ipcMain.handle('clear-login-cache', async () => {
+    await session.defaultSession.clearStorageData({
+      storages: [
+        'cookies',
+        'localstorage',
+        'indexdb',
+        'cachestorage',
+        'serviceworkers',
+      ],
+    });
+    await session.defaultSession.clearCache();
+    return { ok: true };
+  });
+
+  ipcMain.handle('clear-database', async (_event, confirmText) => {
+    if (confirmText !== '清除数据库') {
+      throw new Error('确认文本不正确。');
+    }
+    const repository = activeRepository ?? createDevelopmentRepository();
+
+    if (!repository?.clearAll) {
+      throw new Error('数据库尚未初始化。');
+    }
+
+    await repository.clearAll();
+    return { ok: true };
+  });
 }
 
 async function createMainWindow() {
@@ -58,14 +161,10 @@ async function createMainWindow() {
 
 async function startIntegratedServer() {
   const { MockAiProvider } = require('../dist/backend/ai/providers/mockAiProvider');
-  const {
-    ImportedReviewWorkflow,
-  } = require('../dist/backend/app/importedReviewWorkflow');
+  const { ImportedReviewWorkflow } = require('../dist/backend/app/importedReviewWorkflow');
   const { MvpWorkflow } = require('../dist/backend/app/mvpWorkflow');
   const { createApiApp } = require('../dist/backend/server/app');
-  const {
-    TenshokuKaigiPlugin,
-  } = require('../dist/backend/sites/tenshokuKaigi');
+  const { createSitePlugins } = require('../dist/backend/sites/siteRegistry');
   const {
     SQLiteReviewRepository,
   } = require('../dist/backend/storage/sqliteRepository');
@@ -78,9 +177,10 @@ async function startIntegratedServer() {
     schemaPath,
   );
   activeRepository = repository;
+
   const aiProvider = new MockAiProvider();
   const workflow = new MvpWorkflow(
-    [new TenshokuKaigiPlugin()],
+    createSitePlugins(),
     repository,
     aiProvider,
   );
@@ -111,12 +211,12 @@ async function startIntegratedServer() {
     throw new Error('Failed to start integrated desktop server');
   }
 
-  localImportUrl = `http://127.0.0.1:${address.port}${DEFAULT_SITE.importPath}`;
-  return `http://127.0.0.1:${address.port}`;
+  localApiBaseUrl = `http://127.0.0.1:${address.port}`;
+  return localApiBaseUrl;
 }
 
 async function openCollectorWindow(input) {
-  const site = DEFAULT_SITE;
+  const site = getDesktopSite(input?.siteId);
   const companyQuery = String(input?.companyQuery ?? '').trim();
   const maxPages = Number(input?.maxPages ?? 1);
 
@@ -213,27 +313,109 @@ async function openCollectorWindow(input) {
   });
 }
 
-function isNavigationAbort(error) {
-  return error instanceof Error && error.message.includes('ERR_ABORTED');
+async function collectAndImportReviews({ site, companyQuery, maxPages }) {
+  const parser = site.parser;
+  const searchData = await fetchNextData(
+    `${site.baseUrl}/companies/search?keyword=${encodeURIComponent(companyQuery)}`,
+    site,
+  );
+  const company = parser.extractCompanyCandidates(
+    searchData,
+    companyQuery,
+  )[0];
+
+  if (!company) {
+    throw new Error(`没有找到公司：${companyQuery}`);
+  }
+
+  const reviews = [];
+  const seenIds = new Set();
+
+  for (let page = 1; page <= maxPages; page += 1) {
+    const nextData = await fetchNextData(
+      `${site.baseUrl}/companies/${company.id}/answers?page=${page}`,
+      site,
+    );
+
+    if (!parser.isLoggedIn(nextData)) {
+      throw new LoginRequiredError(site);
+    }
+
+    const answers = parser.extractAnswerNodes(nextData);
+
+    if (answers.length === 0) {
+      break;
+    }
+
+    for (const review of parser.mapAnswersToReviews(
+      answers,
+      company.name,
+      company.id,
+    )) {
+      if (!seenIds.has(review.externalId)) {
+        seenIds.add(review.externalId);
+        const { externalId, ...importedReview } = review;
+        reviews.push(importedReview);
+      }
+    }
+
+    if (page < maxPages) {
+      await delay(600);
+    }
+  }
+
+  if (reviews.length === 0) {
+    throw new Error('没有读取到可导入的评论。');
+  }
+
+  const imported = await importReviews(
+    {
+      company: company.name,
+      reviews,
+    },
+    site,
+  );
+
+  return {
+    company: company.name,
+    reviewCount: reviews.length,
+    reviews: imported.reviews,
+    analysis: imported.analysis,
+  };
 }
 
-function isHttpUrl(rawUrl) {
-  try {
-    const url = new URL(rawUrl);
-    return url.protocol === 'https:' || url.protocol === 'http:';
-  } catch {
-    return false;
+async function fetchNextData(url, site = DEFAULT_SITE) {
+  const response = await session.defaultSession.fetch(url, {
+    redirect: 'follow',
+    headers: {
+      'user-agent':
+        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/149 Safari/537.36',
+    },
+  });
+
+  if (!response.ok) {
+    throw new Error(`${site.displayName}请求失败：HTTP ${response.status}`);
   }
+  if (response.url.includes('sign_in')) {
+    throw new LoginRequiredError(site);
+  }
+
+  return site.parser.parseNextData(await response.text());
 }
 
-function isSitePage(site, rawUrl) {
-  try {
-    const hostname = new URL(rawUrl).hostname;
-    const siteHostname = new URL(site.baseUrl).hostname;
-    return hostname === siteHostname || hostname.endsWith(`.${siteHostname}`);
-  } catch {
-    return false;
+async function importReviews(payload, site = DEFAULT_SITE) {
+  const response = await fetch(createLocalImportUrl(site), {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(body.error ?? `本地后台导入失败：HTTP ${response.status}`);
   }
+
+  return body;
 }
 
 async function showCollectorStatus(window, message) {
@@ -288,197 +470,46 @@ async function showCollectorStatus(window, message) {
   `);
 }
 
-async function collectAndImportReviews({ site, companyQuery, maxPages }) {
-  const searchData = await fetchNextData(
-    `${site.baseUrl}/companies/search?keyword=${encodeURIComponent(companyQuery)}`,
-    site,
-  );
-  const company = JobTalkParser.extractCompanyCandidates(
-    searchData,
-    companyQuery,
-  )[0];
+function getDesktopSite(siteId = DEFAULT_SITE_ID) {
+  const site = DESKTOP_SITE_COLLECTORS[siteId];
 
-  if (!company) {
-    throw new Error(`没有找到公司：${companyQuery}`);
+  if (!site) {
+    throw new Error(`暂不支持该网站的桌面采集：${siteId}`);
   }
 
-  const reviews = [];
-  const seenIds = new Set();
-
-  for (let page = 1; page <= maxPages; page += 1) {
-    const nextData = await fetchNextData(
-      `${site.baseUrl}/companies/${company.id}/answers?page=${page}`,
-      site,
-    );
-
-    if (!JobTalkParser.isLoggedIn(nextData)) {
-      throw new LoginRequiredError(site);
-    }
-
-    const answers = JobTalkParser.extractAnswerNodes(nextData);
-
-    if (answers.length === 0) {
-      break;
-    }
-
-    for (const review of JobTalkParser.mapAnswersToReviews(
-      answers,
-      company.name,
-      company.id,
-    )) {
-      if (!seenIds.has(review.externalId)) {
-        seenIds.add(review.externalId);
-        const { externalId, ...importedReview } = review;
-        reviews.push(importedReview);
-      }
-    }
-
-    if (page < maxPages) {
-      await delay(600);
-    }
-  }
-
-  if (reviews.length === 0) {
-    throw new Error('没有读取到可导入的评论。');
-  }
-
-  const imported = await importReviews({
-    company: company.name,
-    reviews,
-  });
-
-  return {
-    company: company.name,
-    reviewCount: reviews.length,
-    reviews: imported.reviews,
-    analysis: imported.analysis,
-  };
+  return site;
 }
 
-async function fetchNextData(url, site = DEFAULT_SITE) {
-  const response = await session.defaultSession.fetch(url, {
-    redirect: 'follow',
-    headers: {
-      'user-agent':
-        'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 Chrome/149 Safari/537.36',
-    },
-  });
-
-  if (!response.ok) {
-    throw new Error(`${site.displayName}请求失败：HTTP ${response.status}`);
-  }
-  if (response.url.includes('sign_in')) {
-    throw new LoginRequiredError(site);
-  }
-
-  return JobTalkParser.parseNextData(await response.text());
+function createLocalImportUrl(site) {
+  return `${localApiBaseUrl}${site.importPath}`;
 }
 
-async function importReviews(payload) {
-  const response = await fetch(localImportUrl, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const body = await response.json().catch(() => ({}));
+function isNavigationAbort(error) {
+  return error instanceof Error && error.message.includes('ERR_ABORTED');
+}
 
-  if (!response.ok) {
-    throw new Error(body.error ?? `本地后台导入失败：HTTP ${response.status}`);
+function isHttpUrl(rawUrl) {
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'https:' || url.protocol === 'http:';
+  } catch {
+    return false;
   }
+}
 
-  return body;
+function isSitePage(site, rawUrl) {
+  try {
+    const hostname = new URL(rawUrl).hostname;
+    const siteHostname = new URL(site.baseUrl).hostname;
+    return hostname === siteHostname || hostname.endsWith(`.${siteHostname}`);
+  } catch {
+    return false;
+  }
 }
 
 function delay(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
-
-ipcMain.handle('collect-tenshoku-kaigi', (_event, input) => {
-  return openCollectorWindow(input);
-});
-
-ipcMain.handle('import-reviews', async (_event, payload) => {
-  return importReviews(payload);
-});
-
-ipcMain.handle('get-settings', () => {
-  return readSettings();
-});
-
-ipcMain.handle('save-settings', (_event, settings) => {
-  const nextSettings = sanitizeSettings(settings);
-  writeFileSync(getSettingsPath(), `${JSON.stringify(nextSettings, null, 2)}\n`);
-  return nextSettings;
-});
-
-ipcMain.handle('clear-login-cache', async () => {
-  await session.defaultSession.clearStorageData({
-    storages: [
-      'cookies',
-      'localstorage',
-      'indexdb',
-      'cachestorage',
-      'serviceworkers',
-    ],
-  });
-  await session.defaultSession.clearCache();
-  return { ok: true };
-});
-
-ipcMain.handle('clear-database', async (_event, confirmText) => {
-  if (confirmText !== '清除数据库') {
-    throw new Error('确认文本不正确。');
-  }
-  const repository = activeRepository ?? createDevelopmentRepository();
-
-  if (!repository?.clearAll) {
-    throw new Error('数据库尚未初始化。');
-  }
-
-  await repository.clearAll();
-  return { ok: true };
-});
-
-app.setName('Job Review Aggregator');
-
-const gotSingleInstanceLock = app.requestSingleInstanceLock();
-
-if (!gotSingleInstanceLock) {
-  app.quit();
-}
-
-app.on('second-instance', () => {
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.show();
-    mainWindow.focus();
-  }
-});
-
-app.whenReady().then(() => {
-  createMainWindow().catch((error) => {
-    logStartupError(error);
-    app.quit();
-  });
-});
-
-app.on('activate', () => {
-  if (!mainWindow) {
-    createMainWindow().catch((error) => {
-      logStartupError(error);
-      app.quit();
-    });
-  } else {
-    mainWindow.show();
-    mainWindow.focus();
-  }
-});
-
-app.on('window-all-closed', () => {
-  app.quit();
-});
 
 function logStartupError(error) {
   const logPath = path.join(app.getPath('userData'), 'startup-error.log');

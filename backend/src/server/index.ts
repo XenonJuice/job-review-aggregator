@@ -2,7 +2,7 @@ import path from 'node:path';
 import { MockAiProvider } from '../ai/providers/mockAiProvider';
 import { ImportedReviewWorkflow } from '../app/importedReviewWorkflow';
 import { MvpWorkflow } from '../app/mvpWorkflow';
-import { TenshokuKaigiPlugin } from '../sites/tenshokuKaigi';
+import { createSitePlugins } from '../sites/siteRegistry';
 import { SQLiteReviewRepository } from '../storage/sqliteRepository';
 import { createApiApp } from './app';
 
@@ -12,7 +12,7 @@ const dbPath = path.resolve(process.env.DB_PATH ?? 'data/app.sqlite');
 const repository = new SQLiteReviewRepository(dbPath);
 const aiProvider = new MockAiProvider();
 const workflow = new MvpWorkflow(
-  [new TenshokuKaigiPlugin()],
+  createSitePlugins(),
   repository,
   aiProvider,
 );

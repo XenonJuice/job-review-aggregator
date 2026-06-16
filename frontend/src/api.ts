@@ -1,4 +1,4 @@
-export type SiteId = 'tenshoku-kaigi';
+export type SiteId = string;
 
 export interface Site {
   id: SiteId;
@@ -55,6 +55,11 @@ export interface DesktopSettings {
 
 export interface DesktopBridge {
   isDesktop: true;
+  collectSiteReviews(input: {
+    siteId: SiteId;
+    companyQuery: string;
+    maxPages: number;
+  }): Promise<DesktopCollectResult>;
   collectTenshokuKaigi(input: {
     companyQuery: string;
     maxPages: number;
@@ -75,7 +80,8 @@ export function isDesktopApp(): boolean {
   return window.jobReviewAggregator?.isDesktop === true;
 }
 
-export async function collectTenshokuKaigiInDesktop(input: {
+export async function collectSiteReviewsInDesktop(input: {
+  siteId: SiteId;
   companyQuery: string;
   maxPages: number;
 }): Promise<DesktopCollectResult> {
@@ -83,7 +89,7 @@ export async function collectTenshokuKaigiInDesktop(input: {
     throw new Error('当前不是桌面 App 环境。');
   }
 
-  return window.jobReviewAggregator.collectTenshokuKaigi(input);
+  return window.jobReviewAggregator.collectSiteReviews(input);
 }
 
 export async function getDesktopSettings(): Promise<DesktopSettings> {

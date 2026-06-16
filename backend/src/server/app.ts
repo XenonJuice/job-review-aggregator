@@ -8,6 +8,10 @@ import { ImportedReviewWorkflowRequest } from '../app/importedReviewWorkflow';
 import { CompanyReview, ReviewType, SiteId } from '../domain/types';
 import { AVAILABLE_SITES } from '../sites/availableSites';
 import { SiteLoginRequiredError } from '../sites/siteErrors';
+import {
+  getImportableSiteDefinition,
+  ImportableSiteDefinition,
+} from '../sites/siteRegistry';
 import { ReviewRepository } from '../storage/repository';
 
 interface WorkflowRunner {
@@ -18,6 +22,8 @@ interface ImportedReviewWorkflowRunner {
   run(request: ImportedReviewWorkflowRequest): Promise<MvpWorkflowResult>;
 }
 
+// createApiApp 不自己创建数据库和业务流程，而是从外面接收依赖。
+// 这样测试时可以传假的 workflow，桌面 App 运行时可以传真实 SQLite workflow。
 export interface ApiDependencies {
   workflow: WorkflowRunner;
   importedReviewWorkflow: ImportedReviewWorkflowRunner;
@@ -27,17 +33,21 @@ export interface ApiDependencies {
 export function createApiApp(dependencies: ApiDependencies): express.Express {
   const app = express();
 
+  // 允许前台页面访问这个 API，并把 JSON 请求体解析成 request.body。
   app.use(cors());
   app.use(express.json({ limit: '5mb' }));
 
+  // 健康检查接口：只用来确认后台服务是否还活着。
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok' });
   });
 
+  // 前台的网站选项从这里拿，避免前台写死网站名称。
   app.get('/api/sites', (_request, response) => {
     response.json({ sites: AVAILABLE_SITES });
   });
 
+  // 普通分析入口：前台提交公司名、网站、页数，后台负责抓取公开评论并分析。
   app.post('/api/analyses', async (request, response) => {
     const validation = parseAnalysisRequest(request.body);
 
@@ -50,9 +60,16 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
     response.status(201).json(result);
   });
 
-  // 桌面采集器读取登录后评论，再通过该接口导入本地数据库。
-  app.post('/api/imports/tenshoku-kaigi', async (request, response) => {
-    const validation = parseImportedReviewsRequest(request.body);
+  // 桌面采集器读取登录后完整评论，再按站点导入本地数据库并生成分析。
+  app.post('/api/imports/:siteId', async (request, response) => {
+    const site = getImportableSiteDefinition(request.params.siteId);
+
+    if (!site) {
+      response.status(404).json({ error: 'Unsupported import site' });
+      return;
+    }
+
+    const validation = parseImportedReviewsRequest(request.body, site);
 
     if (!validation.ok) {
       response.status(400).json({ error: validation.error });
@@ -65,6 +82,7 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
     response.status(201).json(result);
   });
 
+  // 最近搜索记录：用于右侧历史列表。
   app.get('/api/history/searches', async (request, response) => {
     const searches = await dependencies.repository.listSearches(
       parseHistoryLimit(request.query.limit),
@@ -73,6 +91,7 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
     response.json({ searches });
   });
 
+  // 最近分析记录：也是从 SQLite 里读出来给前台展示。
   app.get('/api/history/analyses', async (request, response) => {
     const analyses = await dependencies.repository.listAnalyses(
       parseHistoryLimit(request.query.limit),
@@ -88,11 +107,13 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
       response: Response,
       _next: NextFunction,
     ) => {
+      // 登录权限不足是可预期错误，返回给前台让用户知道需要桌面登录采集。
       if (error instanceof SiteLoginRequiredError) {
         response.status(error.statusCode).json({ error: error.message });
         return;
       }
 
+      // 其他错误先按 500 处理，同时在终端打印，方便开发时排查。
       console.error(error);
       response.status(500).json({ error: 'Internal server error' });
     },
@@ -119,6 +140,7 @@ const REVIEW_TYPES = new Set<ReviewType>([
   'exit-reason',
 ]);
 
+// 校验“开始分析”接口的请求体，把不可信的前台输入整理成业务层能用的数据。
 function parseAnalysisRequest(body: unknown): AnalysisRequestValidation {
   if (!isRecord(body)) {
     return { ok: false, error: 'Request body must be a JSON object' };
@@ -161,7 +183,11 @@ function parseAnalysisRequest(body: unknown): AnalysisRequestValidation {
   };
 }
 
-function parseImportedReviewsRequest(body: unknown): ImportedReviewsValidation {
+// 校验桌面采集器导入的完整评论，防止无效数据直接写进数据库。
+function parseImportedReviewsRequest(
+  body: unknown,
+  site: ImportableSiteDefinition,
+): ImportedReviewsValidation {
   if (!isRecord(body)) {
     return { ok: false, error: 'Request body must be a JSON object' };
   }
@@ -183,7 +209,7 @@ function parseImportedReviewsRequest(body: unknown): ImportedReviewsValidation {
   const reviews: CompanyReview[] = [];
 
   for (const value of body.reviews) {
-    const review = parseImportedReview(value, company);
+    const review = parseImportedReview(value, company, site);
 
     if (!review) {
       return { ok: false, error: 'reviews contains an invalid item' };
@@ -198,6 +224,7 @@ function parseImportedReviewsRequest(body: unknown): ImportedReviewsValidation {
 function parseImportedReview(
   value: unknown,
   company: string,
+  site: ImportableSiteDefinition,
 ): CompanyReview | undefined {
   if (!isRecord(value)) {
     return undefined;
@@ -229,17 +256,18 @@ function parseImportedReview(
 
   return {
     company,
-    source: '転職会議',
+    source: site.desktopImport.source,
     reviewType: reviewType as ReviewType,
     title,
     content,
     rating,
     postedAt: parseOptionalString(value.postedAt),
-    url: parseJobTalkUrl(value.url),
+    url: parseSiteUrl(value.url, site.desktopImport.allowedUrlHosts),
     metadata,
   };
 }
 
+// 评分目前只接受 0 到 5 的 overall，其他结构先不入库。
 function parseRating(value: unknown): CompanyReview['rating'] {
   if (value === undefined) {
     return undefined;
@@ -276,6 +304,7 @@ function parseMetadata(
 
   const entries = Object.entries(value);
 
+  // metadata 是补充字段，限制数量和长度，避免导入异常大对象。
   if (
     entries.length > 20 ||
     !entries.every(
@@ -291,6 +320,7 @@ function parseMetadata(
   return Object.fromEntries(entries) as Record<string, string>;
 }
 
+// 可选字符串字段做长度限制，避免很长的异常内容进入数据库。
 function parseOptionalString(value: unknown): string | undefined {
   if (value === undefined || value === null) {
     return undefined;
@@ -301,7 +331,11 @@ function parseOptionalString(value: unknown): string | undefined {
     : undefined;
 }
 
-function parseJobTalkUrl(value: unknown): string | undefined {
+// URL 只接受当前站点配置里的 https 域名，避免保存奇怪的外部地址。
+function parseSiteUrl(
+  value: unknown,
+  allowedUrlHosts: readonly string[],
+): string | undefined {
   const rawUrl = parseOptionalString(value);
 
   if (!rawUrl) {
@@ -310,7 +344,8 @@ function parseJobTalkUrl(value: unknown): string | undefined {
 
   try {
     const url = new URL(rawUrl);
-    return url.protocol === 'https:' && url.hostname === 'jobtalk.jp'
+    return url.protocol === 'https:' &&
+      isAllowedHostname(url.hostname, allowedUrlHosts)
       ? url.toString()
       : undefined;
   } catch {
@@ -318,6 +353,17 @@ function parseJobTalkUrl(value: unknown): string | undefined {
   }
 }
 
+function isAllowedHostname(
+  hostname: string,
+  allowedUrlHosts: readonly string[],
+): boolean {
+  return allowedUrlHosts.some(
+    (allowedHost) =>
+      hostname === allowedHost || hostname.endsWith(`.${allowedHost}`),
+  );
+}
+
+// 如果前台没有传网站，默认使用当前登记的全部网站；传了就必须是支持的网站。
 function parseSelectedSiteIds(value: unknown): SiteId[] | undefined {
   if (value === undefined) {
     return AVAILABLE_SITES.map((site) => site.id);
@@ -343,6 +389,7 @@ function parseSelectedSiteIds(value: unknown): SiteId[] | undefined {
   return value;
 }
 
+// 历史记录 limit 做上下限保护，避免一次读太多。
 function parseHistoryLimit(value: unknown): number {
   const rawValue = Array.isArray(value) ? value[0] : value;
   const parsed =
@@ -355,6 +402,7 @@ function parseHistoryLimit(value: unknown): number {
   return Math.min(Math.max(parsed, 1), 100);
 }
 
+// TypeScript 里 unknown 不能直接取字段，先确认它是普通对象。
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

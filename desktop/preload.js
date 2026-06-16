@@ -2,8 +2,14 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('jobReviewAggregator', {
   isDesktop: true,
+  collectSiteReviews(input) {
+    return ipcRenderer.invoke('collect-site-reviews', input);
+  },
   collectTenshokuKaigi(input) {
-    return ipcRenderer.invoke('collect-tenshoku-kaigi', input);
+    return ipcRenderer.invoke('collect-site-reviews', {
+      ...input,
+      siteId: 'tenshoku-kaigi',
+    });
   },
   importReviews(payload) {
     return ipcRenderer.invoke('import-reviews', payload);

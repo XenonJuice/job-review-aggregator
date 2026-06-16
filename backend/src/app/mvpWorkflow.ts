@@ -16,20 +16,32 @@ export interface MvpWorkflowResult {
 }
 
 export class MvpWorkflow {
+  private readonly pluginsBySiteId: ReadonlyMap<SiteId, JobReviewSitePlugin>;
+
   constructor(
-    private readonly plugins: JobReviewSitePlugin[],
+    plugins: JobReviewSitePlugin[],
     private readonly repository: ReviewRepository,
     private readonly aiProvider: AiProvider,
-  ) {}
+  ) {
+    this.pluginsBySiteId = new Map(
+      plugins.map((plugin) => [plugin.id, plugin]),
+    );
+  }
 
   // run 执行公开页面分析链路：搜索公司、读取公开评论、AI 分析、保存结果。
   async run(request: MvpWorkflowRequest): Promise<MvpWorkflowResult> {
     await this.repository.saveSearch(request.companyQuery);
 
-    // 只运行用户勾选的网站插件。
-    const selectedPlugins = this.plugins.filter((plugin) => {
-      return request.selectedSiteIds.includes(plugin.id);
-    });
+    // 只运行用户勾选的网站插件；插件实例由站点注册表统一创建。
+    const selectedPlugins: JobReviewSitePlugin[] = [];
+
+    for (const siteId of request.selectedSiteIds) {
+      const plugin = this.pluginsBySiteId.get(siteId);
+
+      if (plugin) {
+        selectedPlugins.push(plugin);
+      }
+    }
     const reviews: CompanyReview[] = [];
 
     for (const plugin of selectedPlugins) {

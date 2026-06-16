@@ -14,7 +14,7 @@ import {
   AnalysisResult,
   clearDesktopDatabase,
   clearDesktopLoginCache,
-  collectTenshokuKaigiInDesktop,
+  collectSiteReviewsInDesktop,
   createAnalysis,
   DesktopSettings,
   getDesktopSettings,
@@ -29,6 +29,9 @@ import {
 import tenshokuKaigiIcon from '../pic-resource/tensyokukaigi.png';
 
 const REVIEWS_PER_PAGE = 15;
+const SITE_ICONS: Record<string, string | undefined> = {
+  'tenshoku-kaigi': tenshokuKaigiIcon,
+};
 const EMPTY_SETTINGS: DesktopSettings = {
   aiProvider: 'mock',
   apiKey: '',
@@ -186,7 +189,14 @@ export default function App() {
     setDesktopCollecting(true);
 
     try {
-      const collectResult = await collectTenshokuKaigiInDesktop({
+      const siteId = selectedSiteIds[0] ?? sites[0]?.id;
+
+      if (!siteId) {
+        throw new Error('请选择一个评价网站。');
+      }
+
+      const collectResult = await collectSiteReviewsInDesktop({
+        siteId,
         companyQuery,
         maxPages,
       });
@@ -425,29 +435,13 @@ export default function App() {
                 <span className="field-label">评价网站</span>
                 <div className="site-options">
                   {sites.map((site) => (
-                    <button
-                      className={
-                        selectedSiteIds.includes(site.id)
-                          ? 'site-option selected'
-                          : 'site-option'
-                      }
+                    <SiteOptionButton
+                      desktopMode={desktopMode}
                       key={site.id}
-                      disabled={false}
                       onClick={() => handleSiteClick(site.id)}
-                      type="button"
-                    >
-                      <img
-                        alt=""
-                        className="site-option-icon"
-                        src={tenshokuKaigiIcon}
-                      />
-                      <span>
-                        {site.displayName}
-                        <small>
-                          {desktopMode ? '由桌面采集自动登录' : '公开页面分析'}
-                        </small>
-                      </span>
-                    </button>
+                      selected={selectedSiteIds.includes(site.id)}
+                      site={site}
+                    />
                   ))}
                 </div>
                 {siteMessage ? (
@@ -494,7 +488,11 @@ export default function App() {
             {desktopMode ? (
               <button
                 className="secondary-button"
-                disabled={desktopCollecting || companyQuery.trim().length === 0}
+                disabled={
+                  desktopCollecting ||
+                  companyQuery.trim().length === 0 ||
+                  selectedSiteIds.length === 0
+                }
                 onClick={() => void handleDesktopCollect()}
                 type="button"
               >
@@ -691,6 +689,39 @@ export default function App() {
         数据保存在本机 SQLite 中。当前 AI 分析使用本地 Mock Provider。
       </footer>
     </div>
+  );
+}
+
+function SiteOptionButton({
+  desktopMode,
+  onClick,
+  selected,
+  site,
+}: {
+  desktopMode: boolean;
+  onClick: () => void;
+  selected: boolean;
+  site: Site;
+}) {
+  const icon = SITE_ICONS[site.id];
+
+  return (
+    <button
+      className={selected ? 'site-option selected' : 'site-option'}
+      disabled={false}
+      onClick={onClick}
+      type="button"
+    >
+      {icon ? (
+        <img alt="" className="site-option-icon" src={icon} />
+      ) : (
+        <Building2 className="site-option-icon" size={24} />
+      )}
+      <span>
+        {site.displayName}
+        <small>{desktopMode ? '由桌面采集自动登录' : '公开页面分析'}</small>
+      </span>
+    </button>
   );
 }
 
