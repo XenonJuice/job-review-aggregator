@@ -1,6 +1,6 @@
 const assert = require('node:assert/strict');
 const test = require('node:test');
-const parser = require('../extension/parser');
+const parser = require('../desktop/jobtalkParser');
 
 function createHtml(queries, pageProps = {}) {
   const nextData = {
@@ -17,7 +17,7 @@ function createHtml(queries, pageProps = {}) {
   )}</script>`;
 }
 
-test('extension parser selects the best company and normalizes reviews', () => {
+test('desktop JobTalk parser selects the best company and normalizes reviews', () => {
   const searchData = parser.parseNextData(
     createHtml([
       {

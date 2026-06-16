@@ -44,6 +44,12 @@ button {
   padding: 24px 28px;
 }
 
+.topbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
 .brand {
   display: flex;
   align-items: center;
@@ -61,6 +67,139 @@ button {
   background: #173c35;
   border-radius: 12px;
   place-items: center;
+}
+
+.settings-wrapper {
+  position: relative;
+}
+
+.settings-trigger {
+  display: grid;
+  width: 38px;
+  height: 38px;
+  color: #173c35;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(23, 60, 53, 0.12);
+  border-radius: 12px;
+  place-items: center;
+  transition: transform 160ms ease, background 160ms ease;
+}
+
+.settings-trigger:hover {
+  background: #fff;
+  transform: translateY(-1px);
+}
+
+.settings-menu {
+  position: absolute;
+  top: calc(100% + 12px);
+  left: 0;
+  z-index: 20;
+  width: min(360px, calc(100vw - 36px));
+  max-height: 0;
+  padding: 0 18px;
+  overflow: hidden;
+  background: rgba(255, 255, 255, 0.96);
+  border: 1px solid rgba(23, 60, 53, 0.1);
+  border-radius: 18px;
+  box-shadow: 0 20px 70px rgba(43, 54, 50, 0.16);
+  opacity: 0;
+  transform: translateY(-8px) scale(0.98);
+  transform-origin: top left;
+  transition:
+    max-height 260ms ease,
+    padding 260ms ease,
+    opacity 180ms ease,
+    transform 220ms ease;
+}
+
+.settings-menu.open {
+  max-height: 760px;
+  padding: 18px;
+  opacity: 1;
+  transform: translateY(0) scale(1);
+}
+
+.settings-section {
+  display: grid;
+  gap: 10px;
+  padding-bottom: 15px;
+  border-bottom: 1px solid #e8e9e5;
+}
+
+.settings-section + .settings-section {
+  padding-top: 15px;
+}
+
+.settings-section h2 {
+  margin: 0;
+  color: #173c35;
+  font-size: 16px;
+}
+
+.settings-section p,
+.settings-message {
+  margin: 0;
+  color: #6a7571;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.settings-section label {
+  display: grid;
+  gap: 6px;
+  color: #4d5a56;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.settings-section input,
+.settings-section select {
+  width: 100%;
+  padding: 9px 10px;
+  color: #25342f;
+  background: #f7f7f3;
+  border: 1px solid #dfe3dd;
+  border-radius: 10px;
+  outline: 0;
+}
+
+.settings-primary,
+.settings-secondary,
+.settings-danger {
+  width: 100%;
+  padding: 10px 12px;
+  border-radius: 10px;
+  font-weight: 700;
+}
+
+.settings-primary {
+  color: #fff;
+  background: #173c35;
+  border: 0;
+}
+
+.settings-secondary {
+  color: #173c35;
+  background: #e9f1ed;
+  border: 1px solid #9ab8af;
+}
+
+.settings-danger {
+  color: #fff;
+  background: #aa3e35;
+  border: 0;
+}
+
+.settings-primary:disabled,
+.settings-secondary:disabled,
+.settings-danger:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+.danger-zone {
+  border-bottom: 0;
 }
 
 .status-pill {
@@ -381,6 +520,51 @@ main {
   white-space: pre-line;
 }
 
+.review-controls {
+  display: grid;
+  gap: 16px;
+  margin: 0 0 22px;
+}
+
+.review-control-label {
+  display: block;
+  margin-bottom: 8px;
+  color: #4d5a56;
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.tab-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.tab-list button {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 10px;
+  color: #64716c;
+  background: #f7f7f3;
+  border: 1px solid #dfe3dd;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.tab-list button.active {
+  color: #173c35;
+  background: #e9f1ed;
+  border-color: #9ab8af;
+}
+
+.tab-list small {
+  color: #8b9591;
+  font-size: 10px;
+  font-weight: 700;
+}
+
 .review-list {
   border-top: 1px solid #e5e7e2;
 }
@@ -405,11 +589,53 @@ main {
   font-size: 15px;
 }
 
+.review-title-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.review-title-row small {
+  flex: 0 0 auto;
+  color: #929a97;
+  font-size: 10px;
+}
+
 .review-item p {
   margin: 0;
   color: #6a7571;
   font-size: 13px;
   line-height: 1.65;
+}
+
+.review-pagination {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-top: 16px;
+  color: #6a7571;
+  font-size: 12px;
+}
+
+.review-pagination > div {
+  display: flex;
+  gap: 8px;
+}
+
+.review-pagination button {
+  padding: 8px 11px;
+  color: #173c35;
+  background: #f7f7f3;
+  border: 1px solid #dfe3dd;
+  border-radius: 9px;
+  font-weight: 700;
+}
+
+.review-pagination button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
 }
 
 .history-list {

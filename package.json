@@ -2,7 +2,7 @@
   "name": "job-review-aggregator",
   "version": "1.0.0",
   "description": "",
-  "main": "dist/backend/index.js",
+  "main": "desktop/app.js",
   "scripts": {
     "build": "npm run build:server && npm run build:web",
     "build:server": "tsc -p backend/tsconfig.json",
@@ -12,9 +12,27 @@
     "api": "npm run build:server && node dist/backend/server/index.js",
     "web": "vite --config frontend/vite.config.ts",
     "desktop:dev": "concurrently -k -n api,web,desktop -c blue,green,magenta \"npm run api\" \"npm run web\" \"node desktop/start-dev.js\"",
-    "desktop:login-test": "electron desktop/electron-login-test.js",
+    "pack:mac": "npm run build && electron-builder --mac dir",
     "dev": "concurrently -k -n api,web -c blue,green \"npm run api\" \"npm run web\"",
     "test": "npm run build && node --test tests/*.test.js"
+  },
+  "build": {
+    "appId": "com.local.job-review-aggregator",
+    "productName": "Job Review Aggregator",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "desktop/**/*",
+      "backend/src/storage/schema.sql",
+      "dist/**/*",
+      "package.json"
+    ],
+    "mac": {
+      "target": [
+        "dir"
+      ]
+    }
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
@@ -25,6 +43,7 @@
     "@vitejs/plugin-react": "^6.0.2",
     "concurrently": "^10.0.3",
     "electron": "^42.4.0",
+    "electron-builder": "^26.15.3",
     "typescript": "^5.5.3",
     "vite": "^8.0.16"
   },
@@ -33,7 +52,6 @@
     "cors": "^2.8.6",
     "express": "^5.2.1",
     "lucide-react": "^1.18.0",
-    "playwright": "^1.61.0",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"
   }

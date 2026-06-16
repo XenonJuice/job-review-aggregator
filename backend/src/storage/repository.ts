@@ -22,6 +22,7 @@ export interface ReviewRepository {
   saveAnalysis(analysis: CompanyAnalysis): Promise<void>;
   listSearches(limit?: number): Promise<SearchHistoryRecord[]>;
   listAnalyses(limit?: number): Promise<AnalysisHistoryRecord[]>;
+  clearAll?(): Promise<void>;
 }
 
 // 内存 Repository 用于早期开发和单元测试，不提供跨进程持久化。
@@ -67,5 +68,11 @@ export class InMemoryReviewRepository implements ReviewRepository {
         summary: analysis.overallSummary,
       };
     });
+  }
+
+  async clearAll(): Promise<void> {
+    this.searches.length = 0;
+    this.reviews.length = 0;
+    this.analyses.length = 0;
   }
 }

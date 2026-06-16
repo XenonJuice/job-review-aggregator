@@ -152,6 +152,15 @@ export class SQLiteReviewRepository implements ReviewRepository {
     });
   }
 
+  async clearAll(): Promise<void> {
+    this.db.exec(`
+      DELETE FROM analyses;
+      DELETE FROM reviews;
+      DELETE FROM companies;
+      DELETE FROM searches;
+    `);
+  }
+
   private getOrCreateCompanyId(displayName: string): number {
     const normalizedName = normalizeCompanyName(displayName);
     const existing = this.db

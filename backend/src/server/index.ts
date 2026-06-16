@@ -3,7 +3,6 @@ import { MockAiProvider } from '../ai/providers/mockAiProvider';
 import { ImportedReviewWorkflow } from '../app/importedReviewWorkflow';
 import { MvpWorkflow } from '../app/mvpWorkflow';
 import { FileSystemBrowserSessionStore } from '../browser/session';
-import { SystemChromeLoginService } from '../browser/systemChromeLoginService';
 import { TenshokuKaigiPlugin } from '../sites/tenshokuKaigi';
 import { SQLiteReviewRepository } from '../storage/sqliteRepository';
 import { createApiApp } from './app';
@@ -27,14 +26,10 @@ const importedReviewWorkflow = new ImportedReviewWorkflow(
   repository,
   aiProvider,
 );
-// 登录使用普通 Chrome，避免 Google OAuth 拒绝受 Playwright 控制的浏览器。
-// 登录入口打开日常 Chrome，使登录状态与用户手动安装的扩展保持一致。
-const browserLogin = new SystemChromeLoginService();
 const app = createApiApp({
   workflow,
   importedReviewWorkflow,
   repository,
-  browserLogin,
 });
 
 app.listen(port, () => {

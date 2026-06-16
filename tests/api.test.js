@@ -61,19 +61,10 @@ test('API runs an analysis and exposes persisted history', async (context) => {
     repository,
     new MockAiProvider(),
   );
-  // API 测试用轻量替身记录调用，避免自动化测试真的打开 Chromium。
-  const browserLoginCalls = [];
-  const browserLogin = {
-    async open(siteId) {
-      browserLoginCalls.push(siteId);
-      return { siteId, status: 'opened' };
-    },
-  };
   const server = createApiApp({
     workflow,
     importedReviewWorkflow,
     repository,
-    browserLogin,
   }).listen(0);
 
   await once(server, 'listening');
@@ -92,17 +83,6 @@ test('API runs an analysis and exposes persisted history', async (context) => {
   assert.deepEqual(await sitesResponse.json(), {
     sites: [{ id: 'tenshoku-kaigi', displayName: '転職会議' }],
   });
-
-  const loginResponse = await fetch(
-    `${baseUrl}/api/sites/tenshoku-kaigi/login`,
-    { method: 'POST' },
-  );
-  assert.equal(loginResponse.status, 200);
-  assert.deepEqual(await loginResponse.json(), {
-    siteId: 'tenshoku-kaigi',
-    status: 'opened',
-  });
-  assert.deepEqual(browserLoginCalls, ['tenshoku-kaigi']);
 
   const invalidResponse = await fetch(`${baseUrl}/api/analyses`, {
     method: 'POST',
@@ -178,11 +158,6 @@ test('API returns a readable conflict when site login is required', async (conte
       throw new SiteLoginRequiredError('Please sign in');
     },
   };
-  const browserLogin = {
-    async open(siteId) {
-      return { siteId, status: 'opened' };
-    },
-  };
   const importedReviewWorkflow = new ImportedReviewWorkflow(
     repository,
     new MockAiProvider(),
@@ -191,7 +166,6 @@ test('API returns a readable conflict when site login is required', async (conte
     workflow,
     importedReviewWorkflow,
     repository,
-    browserLogin,
   }).listen(0);
 
   await once(server, 'listening');

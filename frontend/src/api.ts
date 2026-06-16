@@ -41,9 +41,16 @@ export interface AnalysisHistory {
   summary: string;
 }
 
-export interface DesktopCollectResult {
+export interface DesktopCollectResult extends AnalysisResult {
   company: string;
   reviewCount: number;
+}
+
+export interface DesktopSettings {
+  aiProvider: string;
+  apiKey: string;
+  baseUrl: string;
+  model: string;
 }
 
 export interface DesktopBridge {
@@ -52,6 +59,10 @@ export interface DesktopBridge {
     companyQuery: string;
     maxPages: number;
   }): Promise<DesktopCollectResult>;
+  getSettings(): Promise<DesktopSettings>;
+  saveSettings(settings: DesktopSettings): Promise<DesktopSettings>;
+  clearLoginCache(): Promise<{ ok: true }>;
+  clearDatabase(confirmText: string): Promise<{ ok: true }>;
 }
 
 declare global {
@@ -75,20 +86,46 @@ export async function collectTenshokuKaigiInDesktop(input: {
   return window.jobReviewAggregator.collectTenshokuKaigi(input);
 }
 
+export async function getDesktopSettings(): Promise<DesktopSettings> {
+  if (!window.jobReviewAggregator) {
+    throw new Error('当前不是桌面 App 环境。');
+  }
+
+  return window.jobReviewAggregator.getSettings();
+}
+
+export async function saveDesktopSettings(
+  settings: DesktopSettings,
+): Promise<DesktopSettings> {
+  if (!window.jobReviewAggregator) {
+    throw new Error('当前不是桌面 App 环境。');
+  }
+
+  return window.jobReviewAggregator.saveSettings(settings);
+}
+
+export async function clearDesktopLoginCache(): Promise<void> {
+  if (!window.jobReviewAggregator) {
+    throw new Error('当前不是桌面 App 环境。');
+  }
+
+  await window.jobReviewAggregator.clearLoginCache();
+}
+
+export async function clearDesktopDatabase(confirmText: string): Promise<void> {
+  if (!window.jobReviewAggregator) {
+    throw new Error('当前不是桌面 App 环境。');
+  }
+
+  await window.jobReviewAggregator.clearDatabase(confirmText);
+}
+
 export async function getSites(): Promise<Site[]> {
   const result = await request<{ sites: Site[] }>('/api/sites');
   return result.sites;
 }
 
 // 请求本机后台打开站点登录窗口；浏览器本身不在前端页面进程中启动。
-export async function openSiteLogin(
-  siteId: SiteId,
-): Promise<{ siteId: SiteId; status: 'opened' | 'focused' }> {
-  return request(`/api/sites/${siteId}/login`, {
-    method: 'POST',
-  });
-}
-
 export async function createAnalysis(input: {
   companyQuery: string;
   selectedSiteIds: SiteId[];

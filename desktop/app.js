@@ -1,11 +1,16 @@
 const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
+const { appendFileSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
+const express = require('express');
 const path = require('node:path');
-const JobTalkParser = require('../extension/parser');
+const JobTalkParser = require('./jobtalkParser');
 
-const FRONTEND_URL = process.env.FRONTEND_URL ?? 'http://localhost:5173';
+const FRONTEND_URL = process.env.FRONTEND_URL;
 const JOBTALK_HOME_URL = 'https://jobtalk.jp/';
-const LOCAL_IMPORT_URL = 'http://127.0.0.1:3000/api/imports/tenshoku-kaigi';
+let localImportUrl = 'http://127.0.0.1:3000/api/imports/tenshoku-kaigi';
 const BASE_URL = 'https://jobtalk.jp';
+let mainWindow;
+let integratedListener;
+let activeRepository;
 
 class LoginRequiredError extends Error {
   constructor() {
@@ -14,10 +19,12 @@ class LoginRequiredError extends Error {
 }
 
 async function createMainWindow() {
-  const window = new BrowserWindow({
+  const frontendUrl = FRONTEND_URL ?? (await startIntegratedServer());
+  mainWindow = new BrowserWindow({
     width: 1320,
     height: 920,
     title: 'Japan Job Review AI',
+    show: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -26,7 +33,85 @@ async function createMainWindow() {
     },
   });
 
-  await window.loadURL(FRONTEND_URL);
+  mainWindow.once('ready-to-show', () => {
+    mainWindow?.show();
+    mainWindow?.focus();
+  });
+  mainWindow.webContents.once('did-finish-load', () => {
+    mainWindow?.show();
+    mainWindow?.focus();
+  });
+  mainWindow.on('closed', () => {
+    mainWindow = undefined;
+  });
+
+  await mainWindow.loadURL(frontendUrl);
+}
+
+async function startIntegratedServer() {
+  const { MockAiProvider } = require('../dist/backend/ai/providers/mockAiProvider');
+  const {
+    ImportedReviewWorkflow,
+  } = require('../dist/backend/app/importedReviewWorkflow');
+  const { MvpWorkflow } = require('../dist/backend/app/mvpWorkflow');
+  const {
+    FileSystemBrowserSessionStore,
+  } = require('../dist/backend/browser/session');
+  const { createApiApp } = require('../dist/backend/server/app');
+  const {
+    TenshokuKaigiPlugin,
+  } = require('../dist/backend/sites/tenshokuKaigi');
+  const {
+    SQLiteReviewRepository,
+  } = require('../dist/backend/storage/sqliteRepository');
+
+  const server = express();
+  const userDataPath = app.getPath('userData');
+  const schemaPath = path.join(__dirname, '../backend/src/storage/schema.sql');
+  const repository = new SQLiteReviewRepository(
+    path.join(userDataPath, 'app.sqlite'),
+    schemaPath,
+  );
+  activeRepository = repository;
+  const aiProvider = new MockAiProvider();
+  const sessions = new FileSystemBrowserSessionStore(
+    path.join(userDataPath, 'browser-profiles'),
+  );
+  const workflow = new MvpWorkflow(
+    [new TenshokuKaigiPlugin()],
+    sessions,
+    repository,
+    aiProvider,
+  );
+  const importedReviewWorkflow = new ImportedReviewWorkflow(
+    repository,
+    aiProvider,
+  );
+
+  server.use(
+    createApiApp({
+      workflow,
+      importedReviewWorkflow,
+      repository,
+    }),
+  );
+  server.use(express.static(path.join(__dirname, '../dist/frontend')));
+  server.use((_request, response) => {
+    response.sendFile(path.join(__dirname, '../dist/frontend/index.html'));
+  });
+
+  const address = await new Promise((resolve) => {
+    integratedListener = server.listen(0, '127.0.0.1', () => {
+      resolve(integratedListener.address());
+    });
+  });
+
+  if (!address || typeof address === 'string') {
+    throw new Error('Failed to start integrated desktop server');
+  }
+
+  localImportUrl = `http://127.0.0.1:${address.port}/api/imports/tenshoku-kaigi`;
+  return `http://127.0.0.1:${address.port}`;
 }
 
 async function openCollectorWindow(input) {
@@ -251,7 +336,7 @@ async function collectAndImportReviews({ companyQuery, maxPages }) {
     throw new Error('没有读取到可导入的评论。');
   }
 
-  await importReviews({
+  const imported = await importReviews({
     company: company.name,
     reviews,
   });
@@ -259,6 +344,8 @@ async function collectAndImportReviews({ companyQuery, maxPages }) {
   return {
     company: company.name,
     reviewCount: reviews.length,
+    reviews: imported.reviews,
+    analysis: imported.analysis,
   };
 }
 
@@ -282,7 +369,7 @@ async function fetchNextData(url) {
 }
 
 async function importReviews(payload) {
-  const response = await fetch(LOCAL_IMPORT_URL, {
+  const response = await fetch(localImportUrl, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
     body: JSON.stringify(payload),
@@ -308,10 +395,140 @@ ipcMain.handle('import-reviews', async (_event, payload) => {
   return importReviews(payload);
 });
 
+ipcMain.handle('get-settings', () => {
+  return readSettings();
+});
+
+ipcMain.handle('save-settings', (_event, settings) => {
+  const nextSettings = sanitizeSettings(settings);
+  writeFileSync(getSettingsPath(), `${JSON.stringify(nextSettings, null, 2)}\n`);
+  return nextSettings;
+});
+
+ipcMain.handle('clear-login-cache', async () => {
+  await session.defaultSession.clearStorageData({
+    storages: [
+      'cookies',
+      'localstorage',
+      'indexdb',
+      'cachestorage',
+      'serviceworkers',
+    ],
+  });
+  await session.defaultSession.clearCache();
+  return { ok: true };
+});
+
+ipcMain.handle('clear-database', async (_event, confirmText) => {
+  if (confirmText !== '清除数据库') {
+    throw new Error('确认文本不正确。');
+  }
+  const repository = activeRepository ?? createDevelopmentRepository();
+
+  if (!repository?.clearAll) {
+    throw new Error('数据库尚未初始化。');
+  }
+
+  await repository.clearAll();
+  return { ok: true };
+});
+
+app.setName('Job Review Aggregator');
+
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
+    }
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 app.whenReady().then(() => {
-  void createMainWindow();
+  createMainWindow().catch((error) => {
+    logStartupError(error);
+    app.quit();
+  });
+});
+
+app.on('activate', () => {
+  if (!mainWindow) {
+    createMainWindow().catch((error) => {
+      logStartupError(error);
+      app.quit();
+    });
+  } else {
+    mainWindow.show();
+    mainWindow.focus();
+  }
 });
 
 app.on('window-all-closed', () => {
   app.quit();
 });
+
+function logStartupError(error) {
+  const logPath = path.join(app.getPath('userData'), 'startup-error.log');
+  const message = error instanceof Error ? error.stack ?? error.message : String(error);
+
+  appendFileSync(logPath, `${new Date().toISOString()}\n${message}\n\n`);
+}
+
+function getSettingsPath() {
+  return path.join(app.getPath('userData'), 'settings.json');
+}
+
+function readSettings() {
+  const settingsPath = getSettingsPath();
+
+  if (!existsSync(settingsPath)) {
+    return {
+      aiProvider: 'mock',
+      apiKey: '',
+      baseUrl: '',
+      model: '',
+    };
+  }
+
+  try {
+    return sanitizeSettings(JSON.parse(readFileSync(settingsPath, 'utf8')));
+  } catch {
+    return {
+      aiProvider: 'mock',
+      apiKey: '',
+      baseUrl: '',
+      model: '',
+    };
+  }
+}
+
+function sanitizeSettings(settings) {
+  return {
+    aiProvider: typeof settings?.aiProvider === 'string' ? settings.aiProvider : 'mock',
+    apiKey: typeof settings?.apiKey === 'string' ? settings.apiKey : '',
+    baseUrl: typeof settings?.baseUrl === 'string' ? settings.baseUrl : '',
+    model: typeof settings?.model === 'string' ? settings.model : '',
+  };
+}
+
+function createDevelopmentRepository() {
+  if (!FRONTEND_URL) {
+    return undefined;
+  }
+
+  const {
+    SQLiteReviewRepository,
+  } = require('../dist/backend/storage/sqliteRepository');
+
+  return new SQLiteReviewRepository(
+    path.resolve('data/app.sqlite'),
+    path.resolve('backend/src/storage/schema.sql'),
+  );
+}
