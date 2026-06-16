@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { MockAiProvider } from '../ai/providers/mockAiProvider';
+import { ImportedReviewWorkflow } from '../app/importedReviewWorkflow';
 import { MvpWorkflow } from '../app/mvpWorkflow';
 import { FileSystemBrowserSessionStore } from '../browser/session';
 import { SystemChromeLoginService } from '../browser/systemChromeLoginService';
@@ -14,17 +15,27 @@ const browserProfileDir = path.resolve(
 );
 
 const repository = new SQLiteReviewRepository(dbPath);
-// 工作流和手动登录共用同一会话存储，确保后续抓取能读取用户登录后的 profile。
+const aiProvider = new MockAiProvider();
 const sessions = new FileSystemBrowserSessionStore(browserProfileDir);
 const workflow = new MvpWorkflow(
   [new TenshokuKaigiPlugin()],
   sessions,
   repository,
-  new MockAiProvider(),
+  aiProvider,
+);
+const importedReviewWorkflow = new ImportedReviewWorkflow(
+  repository,
+  aiProvider,
 );
 // 登录使用普通 Chrome，避免 Google OAuth 拒绝受 Playwright 控制的浏览器。
-const browserLogin = new SystemChromeLoginService(sessions);
-const app = createApiApp({ workflow, repository, browserLogin });
+// 登录入口打开日常 Chrome，使登录状态与用户手动安装的扩展保持一致。
+const browserLogin = new SystemChromeLoginService();
+const app = createApiApp({
+  workflow,
+  importedReviewWorkflow,
+  repository,
+  browserLogin,
+});
 
 app.listen(port, () => {
   console.log(`API server: http://localhost:${port}`);

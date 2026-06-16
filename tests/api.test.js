@@ -6,6 +6,9 @@ const {
 } = require('../dist/backend/ai/providers/mockAiProvider');
 const { MvpWorkflow } = require('../dist/backend/app/mvpWorkflow');
 const {
+  ImportedReviewWorkflow,
+} = require('../dist/backend/app/importedReviewWorkflow');
+const {
   InMemoryBrowserSessionStore,
 } = require('../dist/backend/browser/session');
 const { createApiApp } = require('../dist/backend/server/app');
@@ -54,6 +57,10 @@ test('API runs an analysis and exposes persisted history', async (context) => {
     repository,
     new MockAiProvider(),
   );
+  const importedReviewWorkflow = new ImportedReviewWorkflow(
+    repository,
+    new MockAiProvider(),
+  );
   // API 测试用轻量替身记录调用，避免自动化测试真的打开 Chromium。
   const browserLoginCalls = [];
   const browserLogin = {
@@ -64,6 +71,7 @@ test('API runs an analysis and exposes persisted history', async (context) => {
   };
   const server = createApiApp({
     workflow,
+    importedReviewWorkflow,
     repository,
     browserLogin,
   }).listen(0);
@@ -122,6 +130,30 @@ test('API runs an analysis and exposes persisted history', async (context) => {
   assert.equal(analysisResult.analysis.company, '富士ソフト');
   assert.equal(analysisResult.analysis.provider, 'mock');
 
+  const importResponse = await fetch(
+    `${baseUrl}/api/imports/tenshoku-kaigi`,
+    {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        company: '富士ソフト',
+        reviews: [
+          {
+            reviewType: 'work-environment',
+            title: '働き方',
+            content: '登录后可见的完整评论',
+            rating: { overall: 4 },
+            url: 'https://jobtalk.jp/companies/3894/answers/1',
+          },
+        ],
+      }),
+    },
+  );
+  const importResult = await importResponse.json();
+  assert.equal(importResponse.status, 201);
+  assert.equal(importResult.reviews.length, 1);
+  assert.equal(importResult.reviews[0].source, '転職会議');
+
   const searchesResponse = await fetch(
     `${baseUrl}/api/history/searches?limit=1`,
   );
@@ -151,8 +183,13 @@ test('API returns a readable conflict when site login is required', async (conte
       return { siteId, status: 'opened' };
     },
   };
+  const importedReviewWorkflow = new ImportedReviewWorkflow(
+    repository,
+    new MockAiProvider(),
+  );
   const server = createApiApp({
     workflow,
+    importedReviewWorkflow,
     repository,
     browserLogin,
   }).listen(0);

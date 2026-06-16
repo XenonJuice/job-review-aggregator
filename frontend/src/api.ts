@@ -41,6 +41,40 @@ export interface AnalysisHistory {
   summary: string;
 }
 
+export interface DesktopCollectResult {
+  company: string;
+  reviewCount: number;
+}
+
+export interface DesktopBridge {
+  isDesktop: true;
+  collectTenshokuKaigi(input: {
+    companyQuery: string;
+    maxPages: number;
+  }): Promise<DesktopCollectResult>;
+}
+
+declare global {
+  interface Window {
+    jobReviewAggregator?: DesktopBridge;
+  }
+}
+
+export function isDesktopApp(): boolean {
+  return window.jobReviewAggregator?.isDesktop === true;
+}
+
+export async function collectTenshokuKaigiInDesktop(input: {
+  companyQuery: string;
+  maxPages: number;
+}): Promise<DesktopCollectResult> {
+  if (!window.jobReviewAggregator) {
+    throw new Error('当前不是桌面 App 环境。');
+  }
+
+  return window.jobReviewAggregator.collectTenshokuKaigi(input);
+}
+
 export async function getSites(): Promise<Site[]> {
   const result = await request<{ sites: Site[] }>('/api/sites');
   return result.sites;

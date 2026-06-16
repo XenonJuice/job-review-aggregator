@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>导入転職会議评论</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main>
+      <h1>転職会議评论导入</h1>
+      <p class="hint">
+        请先在当前 Chrome 登录転職会議，并确保本地后台运行在 3000 端口。
+      </p>
+
+      <form id="collect-form">
+        <label for="company-query">公司名</label>
+        <input
+          id="company-query"
+          name="companyQuery"
+          required
+          placeholder="例如：富士ソフト"
+        />
+
+        <label for="max-pages">读取页数</label>
+        <input
+          id="max-pages"
+          name="maxPages"
+          type="number"
+          min="1"
+          max="10"
+          value="3"
+          required
+        />
+
+        <button id="submit-button" type="submit">读取并导入</button>
+      </form>
+
+      <p id="status" role="status"></p>
+      <p class="privacy">
+        只发送评论内容到你电脑上的本地后台，不发送密码、Cookie 或 Google
+        账号信息。
+      </p>
+    </main>
+    <script src="popup.js"></script>
+  </body>
+</html>

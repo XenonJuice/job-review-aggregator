@@ -4,8 +4,9 @@ import {
   MvpWorkflowRequest,
   MvpWorkflowResult,
 } from '../app/mvpWorkflow';
+import { ImportedReviewWorkflowRequest } from '../app/importedReviewWorkflow';
 import { BrowserLoginService } from '../browser/playwrightLoginService';
-import { SiteId } from '../domain/types';
+import { CompanyReview, ReviewType, SiteId } from '../domain/types';
 import { SiteLoginRequiredError } from '../sites/siteErrors';
 import { ReviewRepository } from '../storage/repository';
 
@@ -13,8 +14,13 @@ interface WorkflowRunner {
   run(request: MvpWorkflowRequest): Promise<MvpWorkflowResult>;
 }
 
+interface ImportedReviewWorkflowRunner {
+  run(request: ImportedReviewWorkflowRequest): Promise<MvpWorkflowResult>;
+}
+
 export interface ApiDependencies {
   workflow: WorkflowRunner;
+  importedReviewWorkflow: ImportedReviewWorkflowRunner;
   repository: ReviewRepository;
   browserLogin: BrowserLoginService;
 }
@@ -30,7 +36,7 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
   const app = express();
 
   app.use(cors());
-  app.use(express.json({ limit: '1mb' }));
+  app.use(express.json({ limit: '5mb' }));
 
   app.get('/api/health', (_request, response) => {
     response.json({ status: 'ok' });
@@ -62,6 +68,21 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
     }
 
     const result = await dependencies.workflow.run(validation.value);
+    response.status(201).json(result);
+  });
+
+  // 普通 Chrome 扩展使用当前登录会话读取评论，再通过该接口导入本地数据库。
+  app.post('/api/imports/tenshoku-kaigi', async (request, response) => {
+    const validation = parseImportedReviewsRequest(request.body);
+
+    if (!validation.ok) {
+      response.status(400).json({ error: validation.error });
+      return;
+    }
+
+    const result = await dependencies.importedReviewWorkflow.run(
+      validation.value,
+    );
     response.status(201).json(result);
   });
 
@@ -105,6 +126,20 @@ type AnalysisRequestValidation =
   | { ok: true; value: MvpWorkflowRequest }
   | { ok: false; error: string };
 
+type ImportedReviewsValidation =
+  | { ok: true; value: ImportedReviewWorkflowRequest }
+  | { ok: false; error: string };
+
+const REVIEW_TYPES = new Set<ReviewType>([
+  'company-review',
+  'interview',
+  'work-environment',
+  'technology',
+  'foreigner',
+  'salary',
+  'exit-reason',
+]);
+
 function parseAnalysisRequest(body: unknown): AnalysisRequestValidation {
   if (!isRecord(body)) {
     return { ok: false, error: 'Request body must be a JSON object' };
@@ -145,6 +180,163 @@ function parseAnalysisRequest(body: unknown): AnalysisRequestValidation {
       maxPages,
     },
   };
+}
+
+function parseImportedReviewsRequest(body: unknown): ImportedReviewsValidation {
+  if (!isRecord(body)) {
+    return { ok: false, error: 'Request body must be a JSON object' };
+  }
+
+  const company = typeof body.company === 'string' ? body.company.trim() : '';
+
+  if (!company) {
+    return { ok: false, error: 'company is required' };
+  }
+
+  if (
+    !Array.isArray(body.reviews) ||
+    body.reviews.length < 1 ||
+    body.reviews.length > 500
+  ) {
+    return { ok: false, error: 'reviews must contain 1 to 500 items' };
+  }
+
+  const reviews: CompanyReview[] = [];
+
+  for (const value of body.reviews) {
+    const review = parseImportedReview(value, company);
+
+    if (!review) {
+      return { ok: false, error: 'reviews contains an invalid item' };
+    }
+
+    reviews.push(review);
+  }
+
+  return { ok: true, value: { company, reviews } };
+}
+
+function parseImportedReview(
+  value: unknown,
+  company: string,
+): CompanyReview | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const reviewType = value.reviewType;
+  const title = typeof value.title === 'string' ? value.title.trim() : '';
+  const content = typeof value.content === 'string' ? value.content.trim() : '';
+
+  if (
+    typeof reviewType !== 'string' ||
+    !REVIEW_TYPES.has(reviewType as ReviewType) ||
+    !title ||
+    !content
+  ) {
+    return undefined;
+  }
+
+  const rating = parseRating(value.rating);
+  const metadata = parseMetadata(value.metadata);
+
+  if (value.rating !== undefined && !rating) {
+    return undefined;
+  }
+
+  if (value.metadata !== undefined && !metadata) {
+    return undefined;
+  }
+
+  return {
+    company,
+    source: '転職会議',
+    reviewType: reviewType as ReviewType,
+    title,
+    content,
+    rating,
+    postedAt: parseOptionalString(value.postedAt),
+    url: parseJobTalkUrl(value.url),
+    metadata,
+  };
+}
+
+function parseRating(value: unknown): CompanyReview['rating'] {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const overall = value.overall;
+
+  if (
+    typeof overall !== 'number' ||
+    !Number.isFinite(overall) ||
+    overall < 0 ||
+    overall > 5
+  ) {
+    return undefined;
+  }
+
+  return { overall };
+}
+
+function parseMetadata(
+  value: unknown,
+): Record<string, string> | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const entries = Object.entries(value);
+
+  if (
+    entries.length > 20 ||
+    !entries.every(
+      ([key, item]) =>
+        key.length <= 100 &&
+        typeof item === 'string' &&
+        item.length <= 1_000,
+    )
+  ) {
+    return undefined;
+  }
+
+  return Object.fromEntries(entries) as Record<string, string>;
+}
+
+function parseOptionalString(value: unknown): string | undefined {
+  if (value === undefined || value === null) {
+    return undefined;
+  }
+
+  return typeof value === 'string' && value.length <= 1_000
+    ? value
+    : undefined;
+}
+
+function parseJobTalkUrl(value: unknown): string | undefined {
+  const rawUrl = parseOptionalString(value);
+
+  if (!rawUrl) {
+    return undefined;
+  }
+
+  try {
+    const url = new URL(rawUrl);
+    return url.protocol === 'https:' && url.hostname === 'jobtalk.jp'
+      ? url.toString()
+      : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function parseSelectedSiteIds(value: unknown): SiteId[] | undefined {

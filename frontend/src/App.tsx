@@ -11,9 +11,11 @@ import {
 import {
   AnalysisHistory,
   AnalysisResult,
+  collectTenshokuKaigiInDesktop,
   createAnalysis,
   getHistory,
   getSites,
+  isDesktopApp,
   openSiteLogin,
   SearchHistory,
   Site,
@@ -30,6 +32,7 @@ export default function App() {
   const [searches, setSearches] = useState<SearchHistory[]>([]);
   const [analyses, setAnalyses] = useState<AnalysisHistory[]>([]);
   const [loading, setLoading] = useState(false);
+  const [desktopCollecting, setDesktopCollecting] = useState(false);
   const [openingSiteId, setOpeningSiteId] = useState<SiteId>();
   const [siteMessage, setSiteMessage] = useState('');
   const [error, setError] = useState('');
@@ -89,13 +92,37 @@ export default function App() {
       const result = await openSiteLogin(siteId);
       setSiteMessage(
         result.status === 'opened'
-          ? '普通 Google Chrome 已打开。公开评价无需登录，会员页面采集将在后续扩展中接入。'
+          ? '転職会議已打开。桌面 App 中请使用下方“读取登录后完整评论”。'
           : 'Google Chrome 已打开。',
       );
     } catch (loginError) {
       setError(toErrorMessage(loginError));
     } finally {
       setOpeningSiteId(undefined);
+    }
+  }
+
+  async function handleDesktopCollect() {
+    setError('');
+    setSiteMessage('');
+    setDesktopCollecting(true);
+
+    try {
+      const collectResult = await collectTenshokuKaigiInDesktop({
+        companyQuery,
+        maxPages,
+      });
+      setSiteMessage(
+        `已导入 ${collectResult.company} 的 ${collectResult.reviewCount} 条登录后评论。`,
+      );
+
+      const history = await getHistory();
+      setSearches(history.searches);
+      setAnalyses(history.analyses);
+    } catch (collectError) {
+      setError(toErrorMessage(collectError));
+    } finally {
+      setDesktopCollecting(false);
     }
   }
 
@@ -168,7 +195,7 @@ export default function App() {
                       )}
                       <span>
                         {site.displayName}
-                        <small>会员登录（可选）</small>
+                        <small>打开登录页面</small>
                       </span>
                     </button>
                   ))}
@@ -214,6 +241,26 @@ export default function App() {
                 </>
               )}
             </button>
+            {isDesktopApp() ? (
+              <button
+                className="secondary-button"
+                disabled={desktopCollecting || companyQuery.trim().length === 0}
+                onClick={() => void handleDesktopCollect()}
+                type="button"
+              >
+                {desktopCollecting ? (
+                  <>
+                    <LoaderCircle className="spin" size={19} />
+                    正在自动采集
+                  </>
+                ) : (
+                  <>
+                    读取登录后完整评论
+                    <ArrowRight size={19} />
+                  </>
+                )}
+              </button>
+            ) : null}
             {error ? <p className="error-message">{error}</p> : null}
           </form>
         </section>
