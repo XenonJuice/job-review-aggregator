@@ -5,10 +5,9 @@ const { contextBridge, ipcRenderer } = require('electron');
  * */
 
 contextBridge.exposeInMainWorld('jobReviewAggregator', {
-  isDesktop: true,
   collectSiteReviews(input) {
     return ipcRenderer.invoke('collect-site-reviews', input);
-  },
+  },// 这里的调用都是在app js里接住消息的
   importReviews(payload) {
     return ipcRenderer.invoke('import-reviews', payload);
   },

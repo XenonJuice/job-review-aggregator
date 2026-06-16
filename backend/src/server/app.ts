@@ -60,7 +60,7 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
     response.status(201).json(result);
   });
 
-  // 桌面采集器读取登录后完整评论，再按站点导入本地数据库并生成分析。
+  // 登录采集器读取完整评论，再按站点导入本地数据库并生成分析。
   app.post('/api/imports/:siteId', async (request, response) => {
     const site = getImportableSiteDefinition(request.params.siteId);
 
@@ -183,7 +183,7 @@ function parseAnalysisRequest(body: unknown): AnalysisRequestValidation {
   };
 }
 
-// 校验桌面采集器导入的完整评论，防止无效数据直接写进数据库。
+// 校验登录采集器导入的完整评论，防止无效数据直接写进数据库。
 function parseImportedReviewsRequest(
   body: unknown,
   site: ImportableSiteDefinition,

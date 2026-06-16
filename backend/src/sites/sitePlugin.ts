@@ -20,6 +20,6 @@ export interface JobReviewSitePlugin {
   // searchCompany 把统一搜索词转换为站点内公司候选列表。
   searchCompany(input: CompanySearchInput): Promise<CompanySearchResult[]>;
 
-  // fetchCompanyReviews 读取站点公开可访问的评论；登录后完整评论由桌面采集器导入。
+  // fetchCompanyReviews 读取站点公开可访问的评论；登录后完整评论由登录采集器导入。
   fetchCompanyReviews(request: FetchReviewsRequest): Promise<CompanyReview[]>;
 }

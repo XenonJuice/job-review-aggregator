@@ -5,7 +5,7 @@ const path = require('node:path');
 const JobTalkParser = require('./jobtalkParser');
 
 const FRONTEND_URL = process.env.FRONTEND_URL;
-const DESKTOP_SITE_COLLECTORS = {
+const SITE_COLLECTORS = {
   'tenshoku-kaigi': {
     id: 'tenshoku-kaigi',
     displayName: '転職会議',
@@ -15,7 +15,7 @@ const DESKTOP_SITE_COLLECTORS = {
     parser: JobTalkParser,
   },
 };
-const DEFAULT_SITE = getDefaultDesktopSite();
+const DEFAULT_SITE = getDefaultCollectorSite();
 let localApiBaseUrl = 'http://127.0.0.1:3000';
 let mainWindow;
 let integratedListener;
@@ -226,7 +226,7 @@ async function startIntegratedServer() {
 }
 
 async function openCollectorWindow(input) {
-  const site = getDesktopSite(input?.siteId);
+  const site = getCollectorSite(input?.siteId);
   const companyQuery = String(input?.companyQuery ?? '').trim();
   const maxPages = Number(input?.maxPages ?? 1);
 
@@ -269,7 +269,7 @@ async function openCollectorWindow(input) {
         return;
       }
 
-      // 桌面采集窗口保留网页登录跳转，只把非网页协议交给系统处理。
+      // 采集窗口保留网页登录跳转，只把非网页协议交给系统处理。
       event.preventDefault();
       void shell.openExternal(url);
     });
@@ -480,27 +480,27 @@ async function showCollectorStatus(window, message) {
   `);
 }
 
-function getDesktopSite(siteId) {
+function getCollectorSite(siteId) {
   const normalizedSiteId = String(siteId ?? '').trim();
 
   if (!normalizedSiteId) {
     throw new Error('请选择评价网站。');
   }
 
-  const site = DESKTOP_SITE_COLLECTORS[normalizedSiteId];
+  const site = SITE_COLLECTORS[normalizedSiteId];
 
   if (!site) {
-    throw new Error(`暂不支持该网站的桌面采集：${normalizedSiteId}`);
+    throw new Error(`暂不支持该网站的完整评论采集：${normalizedSiteId}`);
   }
 
   return site;
 }
 
-function getDefaultDesktopSite() {
-  const [site] = Object.values(DESKTOP_SITE_COLLECTORS);
+function getDefaultCollectorSite() {
+  const [site] = Object.values(SITE_COLLECTORS);
 
   if (!site) {
-    throw new Error('未配置桌面采集网站。');
+    throw new Error('未配置完整评论采集网站。');
   }
 
   return site;

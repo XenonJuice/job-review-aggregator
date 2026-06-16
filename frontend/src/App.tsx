@@ -12,16 +12,15 @@ import {
 import {
   AnalysisHistory,
   AnalysisResult,
-  clearDesktopDatabase,
-  clearDesktopLoginCache,
-  collectSiteReviewsInDesktop,
+  AppSettings,
+  clearDatabase,
+  clearLoginCache,
+  collectSiteReviews,
   createAnalysis,
-  DesktopSettings,
-  getDesktopSettings,
+  getAppSettings,
   getHistory,
   getSites,
-  isDesktopApp,
-  saveDesktopSettings,
+  saveAppSettings,
   SearchHistory,
   Site,
   SiteId,
@@ -32,7 +31,7 @@ const REVIEWS_PER_PAGE = 15;
 const SITE_ICONS: Record<string, string | undefined> = {
   'tenshoku-kaigi': tenshokuKaigiIcon,
 };
-const EMPTY_SETTINGS: DesktopSettings = {
+const EMPTY_SETTINGS: AppSettings = {
   aiProvider: 'mock',
   apiKey: '',
   baseUrl: '',
@@ -40,7 +39,6 @@ const EMPTY_SETTINGS: DesktopSettings = {
 };
 
 export default function App() {
-  const desktopMode = isDesktopApp();
   const [companyQuery, setCompanyQuery] = useState('富士ソフト');
   const [maxPages, setMaxPages] = useState(1);
   const [sites, setSites] = useState<Site[]>([]);
@@ -49,12 +47,12 @@ export default function App() {
   const [searches, setSearches] = useState<SearchHistory[]>([]);
   const [analyses, setAnalyses] = useState<AnalysisHistory[]>([]);
   const [loading, setLoading] = useState(false);
-  const [desktopCollecting, setDesktopCollecting] = useState(false);
+  const [collectingFullReviews, setCollectingFullReviews] = useState(false);
   const [activeSource, setActiveSource] = useState('all');
   const [activeReviewType, setActiveReviewType] = useState('all');
   const [reviewPage, setReviewPage] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settings, setSettings] = useState<DesktopSettings>(EMPTY_SETTINGS);
+  const [settings, setSettings] = useState<AppSettings>(EMPTY_SETTINGS);
   const [settingsMessage, setSettingsMessage] = useState('');
   const [databaseConfirmText, setDatabaseConfirmText] = useState('');
   const [settingsBusy, setSettingsBusy] = useState(false);
@@ -63,13 +61,8 @@ export default function App() {
 
   useEffect(() => {
     void loadInitialData();
+    void loadAppSettings();
   }, []);
-
-  useEffect(() => {
-    if (desktopMode) {
-      void loadDesktopSettings();
-    }
-  }, [desktopMode]);
 
   useEffect(() => {
     setActiveSource('all');
@@ -129,9 +122,9 @@ export default function App() {
     }
   }
 
-  async function loadDesktopSettings() {
+  async function loadAppSettings() {
     try {
-      setSettings(await getDesktopSettings());
+      setSettings(await getAppSettings());
     } catch (settingsError) {
       setSettingsMessage(toErrorMessage(settingsError));
     }
@@ -175,18 +168,13 @@ export default function App() {
     setSelectedSiteIds((current) =>
       current.includes(siteId) ? current : [...current, siteId],
     );
-
-    if (desktopMode) {
-      setSiteMessage('桌面 App 会在“读取登录后完整评论”时自动处理登录窗口。');
-    } else {
-      setSiteMessage('当前 Web 模式只支持公开页面分析；完整评论请使用桌面 App。');
-    }
+    setSiteMessage('读取登录后完整评论时，应用会自动打开登录窗口。');
   }
 
-  async function handleDesktopCollect() {
+  async function handleCollectFullReviews() {
     setError('');
     setSiteMessage('');
-    setDesktopCollecting(true);
+    setCollectingFullReviews(true);
 
     try {
       const siteId = selectedSiteIds[0] ?? sites[0]?.id;
@@ -195,7 +183,7 @@ export default function App() {
         throw new Error('请选择一个评价网站。');
       }
 
-      const collectResult = await collectSiteReviewsInDesktop({
+      const collectResult = await collectSiteReviews({
         siteId,
         companyQuery,
         maxPages,
@@ -214,7 +202,7 @@ export default function App() {
     } catch (collectError) {
       setError(toErrorMessage(collectError));
     } finally {
-      setDesktopCollecting(false);
+      setCollectingFullReviews(false);
     }
   }
 
@@ -223,7 +211,7 @@ export default function App() {
     setSettingsMessage('');
 
     try {
-      setSettings(await saveDesktopSettings(settings));
+      setSettings(await saveAppSettings(settings));
       setSettingsMessage('AI 配置已保存。');
     } catch (settingsError) {
       setSettingsMessage(toErrorMessage(settingsError));
@@ -237,7 +225,7 @@ export default function App() {
     setSettingsMessage('');
 
     try {
-      await clearDesktopLoginCache();
+      await clearLoginCache();
       setSettingsMessage('登录缓存已清除，下次采集会重新登录。');
     } catch (settingsError) {
       setSettingsMessage(toErrorMessage(settingsError));
@@ -251,7 +239,7 @@ export default function App() {
     setSettingsMessage('');
 
     try {
-      await clearDesktopDatabase(databaseConfirmText);
+      await clearDatabase(databaseConfirmText);
       setResult(undefined);
       setSearches([]);
       setAnalyses([]);
@@ -344,7 +332,7 @@ export default function App() {
                 </label>
                 <button
                   className="settings-primary"
-                  disabled={!desktopMode || settingsBusy}
+                  disabled={settingsBusy}
                   onClick={() => void handleSaveSettings()}
                   type="button"
                 >
@@ -355,7 +343,7 @@ export default function App() {
               <div className="settings-section danger-zone">
                 <button
                   className="settings-secondary"
-                  disabled={!desktopMode || settingsBusy}
+                  disabled={settingsBusy}
                   onClick={() => void handleClearLoginCache()}
                   type="button"
                 >
@@ -373,7 +361,6 @@ export default function App() {
                 <button
                   className="settings-danger"
                   disabled={
-                    !desktopMode ||
                     settingsBusy ||
                     databaseConfirmText !== '清除数据库'
                   }
@@ -399,7 +386,7 @@ export default function App() {
         </div>
         <span className="status-pill">
           <span className="status-dot" />
-          Desktop App
+          本地应用
         </span>
       </header>
 
@@ -436,7 +423,6 @@ export default function App() {
                 <div className="site-options">
                   {sites.map((site) => (
                     <SiteOptionButton
-                      desktopMode={desktopMode}
                       key={site.id}
                       onClick={() => handleSiteClick(site.id)}
                       selected={selectedSiteIds.includes(site.id)}
@@ -485,30 +471,28 @@ export default function App() {
                 </>
               )}
             </button>
-            {desktopMode ? (
-              <button
-                className="secondary-button"
-                disabled={
-                  desktopCollecting ||
-                  companyQuery.trim().length === 0 ||
-                  selectedSiteIds.length === 0
-                }
-                onClick={() => void handleDesktopCollect()}
-                type="button"
-              >
-                {desktopCollecting ? (
-                  <>
-                    <LoaderCircle className="spin" size={19} />
-                    正在自动采集
-                  </>
-                ) : (
-                  <>
-                    读取登录后完整评论
-                    <ArrowRight size={19} />
-                  </>
-                )}
-              </button>
-            ) : null}
+            <button
+              className="secondary-button"
+              disabled={
+                collectingFullReviews ||
+                companyQuery.trim().length === 0 ||
+                selectedSiteIds.length === 0
+              }
+              onClick={() => void handleCollectFullReviews()}
+              type="button"
+            >
+              {collectingFullReviews ? (
+                <>
+                  <LoaderCircle className="spin" size={19} />
+                  正在自动采集
+                </>
+              ) : (
+                <>
+                  读取登录后完整评论
+                  <ArrowRight size={19} />
+                </>
+              )}
+            </button>
             {error ? <p className="error-message">{error}</p> : null}
           </form>
         </section>
@@ -693,12 +677,10 @@ export default function App() {
 }
 
 function SiteOptionButton({
-  desktopMode,
   onClick,
   selected,
   site,
 }: {
-  desktopMode: boolean;
   onClick: () => void;
   selected: boolean;
   site: Site;
@@ -719,7 +701,7 @@ function SiteOptionButton({
       )}
       <span>
         {site.displayName}
-        <small>{desktopMode ? '由桌面采集自动登录' : '公开页面分析'}</small>
+        <small>支持登录后完整评论</small>
       </span>
     </button>
   );

@@ -41,82 +41,78 @@ export interface AnalysisHistory {
   summary: string;
 }
 
-export interface DesktopCollectResult extends AnalysisResult {
+export interface SiteCollectResult extends AnalysisResult {
   company: string;
   reviewCount: number;
 }
 
-export interface DesktopSettings {
+export interface AppSettings {
   aiProvider: string;
   apiKey: string;
   baseUrl: string;
   model: string;
 }
 
-export interface DesktopBridge {
-  isDesktop: true;
+export interface AppBridge {
   collectSiteReviews(input: {
     siteId: SiteId;
     companyQuery: string;
     maxPages: number;
-  }): Promise<DesktopCollectResult>;
-  getSettings(): Promise<DesktopSettings>;
-  saveSettings(settings: DesktopSettings): Promise<DesktopSettings>;
+  }): Promise<SiteCollectResult>;
+  getSettings(): Promise<AppSettings>;
+  saveSettings(settings: AppSettings): Promise<AppSettings>;
   clearLoginCache(): Promise<{ ok: true }>;
   clearDatabase(confirmText: string): Promise<{ ok: true }>;
 }
 
+// 类型增强，运行时会擦除
 declare global {
   interface Window {
-    jobReviewAggregator?: DesktopBridge;
+    jobReviewAggregator?: AppBridge;
   }
 }
 
-export function isDesktopApp(): boolean {
-  return window.jobReviewAggregator?.isDesktop === true;
-}
-
-export async function collectSiteReviewsInDesktop(input: {
+export async function collectSiteReviews(input: {
   siteId: SiteId;
   companyQuery: string;
   maxPages: number;
-}): Promise<DesktopCollectResult> {
+}): Promise<SiteCollectResult> {
   if (!window.jobReviewAggregator) {
-    throw new Error('当前不是桌面 App 环境。');
+    throw new Error('应用桥接未初始化，请重新打开应用。');
   }
 
   return window.jobReviewAggregator.collectSiteReviews(input);
 }
 
-export async function getDesktopSettings(): Promise<DesktopSettings> {
+export async function getAppSettings(): Promise<AppSettings> {
   if (!window.jobReviewAggregator) {
-    throw new Error('当前不是桌面 App 环境。');
+    throw new Error('应用桥接未初始化，请重新打开应用。');
   }
 
   return window.jobReviewAggregator.getSettings();
 }
 
-export async function saveDesktopSettings(
-  settings: DesktopSettings,
-): Promise<DesktopSettings> {
+export async function saveAppSettings(
+  settings: AppSettings,
+): Promise<AppSettings> {
   if (!window.jobReviewAggregator) {
-    throw new Error('当前不是桌面 App 环境。');
+    throw new Error('应用桥接未初始化，请重新打开应用。');
   }
 
   return window.jobReviewAggregator.saveSettings(settings);
 }
 
-export async function clearDesktopLoginCache(): Promise<void> {
+export async function clearLoginCache(): Promise<void> {
   if (!window.jobReviewAggregator) {
-    throw new Error('当前不是桌面 App 环境。');
+    throw new Error('应用桥接未初始化，请重新打开应用。');
   }
 
   await window.jobReviewAggregator.clearLoginCache();
 }
 
-export async function clearDesktopDatabase(confirmText: string): Promise<void> {
+export async function clearDatabase(confirmText: string): Promise<void> {
   if (!window.jobReviewAggregator) {
-    throw new Error('当前不是桌面 App 环境。');
+    throw new Error('应用桥接未初始化，请重新打开应用。');
   }
 
   await window.jobReviewAggregator.clearDatabase(confirmText);
