@@ -166,7 +166,9 @@ export default function App() {
 
   function handleSiteClick(siteId: SiteId) {
     setSelectedSiteIds((current) =>
-      current.includes(siteId) ? current : [...current, siteId],
+      current.includes(siteId)
+        ? current.filter((currentSiteId) => currentSiteId !== siteId)
+        : [...current, siteId],
     );
     setSiteMessage('读取登录后完整评论时，应用会自动打开登录窗口。');
   }
@@ -177,23 +179,26 @@ export default function App() {
     setCollectingFullReviews(true);
 
     try {
-      const siteId = selectedSiteIds[0] ?? sites[0]?.id;
+      const siteIds = selectedSiteIds;
 
-      if (!siteId) {
-        throw new Error('请选择一个评价网站。');
+      if (siteIds.length === 0) {
+        throw new Error('请至少选择一个评价网站。');
       }
 
       const collectResult = await collectSiteReviews({
-        siteId,
+        siteIds,
         companyQuery,
         maxPages,
       });
+      const collectedSiteCount = collectResult.siteResults.length;
       setResult({
         reviews: collectResult.reviews,
         analysis: collectResult.analysis,
       });
       setSiteMessage(
-        `已导入 ${collectResult.company} 的 ${collectResult.reviewCount} 条登录后评论。`,
+        collectedSiteCount > 1
+          ? `已从 ${collectedSiteCount} 个网站导入 ${collectResult.company} 的 ${collectResult.reviewCount} 条登录后评论。`
+          : `已导入 ${collectResult.company} 的 ${collectResult.reviewCount} 条登录后评论。`,
       );
 
       const history = await getHistory();

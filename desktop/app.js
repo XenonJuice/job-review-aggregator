@@ -11,7 +11,6 @@ const SITE_COLLECTORS = {
     displayName: '転職会議',
     baseUrl: 'https://jobtalk.jp',
     homeUrl: 'https://jobtalk.jp/',
-    importPath: '/api/imports/tenshoku-kaigi',
     parser: JobTalkParser,
   },
 };
@@ -85,8 +84,7 @@ function registerAppLifecycleHandlers() {
 /**
  * 注册渲染进程可调用的 IPC 处理器。
  * IPC 处理器是 Electron 主进程里“接收前端请求并执行对应操作”的函数。
- * - collect-site-reviews：按传入的 siteId 打开站点采集窗口并导入评论
- * - import-reviews：导入已采集的评论数据
+ * - collect-site-reviews：按传入的 siteIds 打开站点采集窗口并导入评论
  * - get-settings / save-settings：读取和保存本地设置
  * - clear-login-cache：清除 Electron 会话中的登录缓存
  * - clear-database：校验确认文本后清空本地数据库
@@ -94,10 +92,6 @@ function registerAppLifecycleHandlers() {
 function registerIpcHandlers() {
   ipcMain.handle('collect-site-reviews', (_event, input) => {
     return openCollectorWindow(input);
-  });
-
-  ipcMain.handle('import-reviews', async (_event, payload) => {
-    return importReviews(payload);
   });
 
   ipcMain.handle('get-settings', () => {
@@ -226,7 +220,7 @@ async function startIntegratedServer() {
 }
 
 async function openCollectorWindow(input) {
-  const site = getCollectorSite(input?.siteId);
+  const sites = getCollectorSites(input?.siteIds ?? input?.siteId);
   const companyQuery = String(input?.companyQuery ?? '').trim();
   const maxPages = Number(input?.maxPages ?? 1);
 
@@ -237,8 +231,45 @@ async function openCollectorWindow(input) {
     throw new Error('页数必须是 1 到 10。');
   }
 
+  const collections = [];
+
+  for (const site of sites) {
+    collections.push(
+      await collectReviewsWithLogin({ site, companyQuery, maxPages }),
+    );
+  }
+
+  const company = collections[0]?.company ?? companyQuery;
+  const siteImports = collections.map((collection) => ({
+    siteId: collection.site.id,
+    reviews: collection.reviews,
+  }));
+  const reviewCount = siteImports.reduce(
+    (total, siteImport) => total + siteImport.reviews.length,
+    0,
+  );
+  const imported = await importCollectedSiteReviews({
+    company,
+    siteImports,
+  });
+
+  return {
+    company,
+    reviewCount,
+    reviews: imported.reviews,
+    analysis: imported.analysis,
+    siteResults: collections.map((collection) => ({
+      siteId: collection.site.id,
+      displayName: collection.site.displayName,
+      company: collection.company,
+      reviewCount: collection.reviews.length,
+    })),
+  };
+}
+
+async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
   try {
-    return await collectAndImportReviews({ site, companyQuery, maxPages });
+    return await collectReviewsFromSite({ site, companyQuery, maxPages });
   } catch (error) {
     if (!(error instanceof LoginRequiredError)) {
       throw error;
@@ -285,7 +316,7 @@ async function openCollectorWindow(input) {
     });
 
     const timer = setInterval(() => {
-      collectAndImportReviews({ site, companyQuery, maxPages })
+      collectReviewsFromSite({ site, companyQuery, maxPages })
         .then((result) => {
           settled = true;
           clearInterval(timer);
@@ -323,7 +354,7 @@ async function openCollectorWindow(input) {
   });
 }
 
-async function collectAndImportReviews({ site, companyQuery, maxPages }) {
+async function collectReviewsFromSite({ site, companyQuery, maxPages }) {
   const parser = site.parser;
   const searchData = await fetchNextData(
     `${site.baseUrl}/companies/search?keyword=${encodeURIComponent(companyQuery)}`,
@@ -378,19 +409,10 @@ async function collectAndImportReviews({ site, companyQuery, maxPages }) {
     throw new Error('没有读取到可导入的评论。');
   }
 
-  const imported = await importReviews(
-    {
-      company: company.name,
-      reviews,
-    },
-    site,
-  );
-
   return {
+    site,
     company: company.name,
-    reviewCount: reviews.length,
-    reviews: imported.reviews,
-    analysis: imported.analysis,
+    reviews,
   };
 }
 
@@ -411,21 +433,6 @@ async function fetchNextData(url, site = DEFAULT_SITE) {
   }
 
   return site.parser.parseNextData(await response.text());
-}
-
-async function importReviews(payload, site = DEFAULT_SITE) {
-  const response = await fetch(createLocalImportUrl(site), {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(payload),
-  });
-  const body = await response.json().catch(() => ({}));
-
-  if (!response.ok) {
-    throw new Error(body.error ?? `本地后台导入失败：HTTP ${response.status}`);
-  }
-
-  return body;
 }
 
 async function showCollectorStatus(window, message) {
@@ -496,6 +503,21 @@ function getCollectorSite(siteId) {
   return site;
 }
 
+function getCollectorSites(siteIds) {
+  const rawSiteIds = Array.isArray(siteIds) ? siteIds : [siteIds];
+  const normalizedSiteIds = rawSiteIds
+    .map((siteId) => String(siteId ?? '').trim())
+    .filter(Boolean);
+
+  if (normalizedSiteIds.length === 0) {
+    throw new Error('请选择评价网站。');
+  }
+
+  return Array.from(new Set(normalizedSiteIds)).map((siteId) =>
+    getCollectorSite(siteId),
+  );
+}
+
 function getDefaultCollectorSite() {
   const [site] = Object.values(SITE_COLLECTORS);
 
@@ -506,8 +528,19 @@ function getDefaultCollectorSite() {
   return site;
 }
 
-function createLocalImportUrl(site) {
-  return `${localApiBaseUrl}${site.importPath}`;
+async function importCollectedSiteReviews(payload) {
+  const response = await fetch(`${localApiBaseUrl}/api/imports`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const body = await response.json().catch(() => ({}));
+
+  if (!response.ok) {
+    throw new Error(body.error ?? `本地后台导入失败：HTTP ${response.status}`);
+  }
+
+  return body;
 }
 
 function isNavigationAbort(error) {

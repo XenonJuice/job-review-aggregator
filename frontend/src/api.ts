@@ -44,6 +44,12 @@ export interface AnalysisHistory {
 export interface SiteCollectResult extends AnalysisResult {
   company: string;
   reviewCount: number;
+  siteResults: Array<{
+    siteId: SiteId;
+    displayName: string;
+    company: string;
+    reviewCount: number;
+  }>;
 }
 
 export interface AppSettings {
@@ -55,7 +61,7 @@ export interface AppSettings {
 
 export interface AppBridge {
   collectSiteReviews(input: {
-    siteId: SiteId;
+    siteIds: SiteId[];
     companyQuery: string;
     maxPages: number;
   }): Promise<SiteCollectResult>;
@@ -73,7 +79,7 @@ declare global {
 }
 
 export async function collectSiteReviews(input: {
-  siteId: SiteId;
+  siteIds: SiteId[];
   companyQuery: string;
   maxPages: number;
 }): Promise<SiteCollectResult> {

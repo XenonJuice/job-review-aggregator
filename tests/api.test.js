@@ -145,25 +145,26 @@ test('API runs an analysis and exposes persisted history', async (context) => {
   assert.equal(analysisResult.analysis.company, '富士ソフト');
   assert.equal(analysisResult.analysis.provider, 'mock');
 
-  const importResponse = await fetch(
-    `${baseUrl}/api/imports/tenshoku-kaigi`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        company: '富士ソフト',
-        reviews: [
-          {
-            reviewType: 'work-environment',
-            title: '働き方',
-            content: '登录后可见的完整评论',
-            rating: { overall: 4 },
-            url: 'https://jobtalk.jp/companies/3894/answers/1',
-          },
-        ],
-      }),
-    },
-  );
+  const importResponse = await fetch(`${baseUrl}/api/imports`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      company: '富士ソフト',
+      siteImports: [
+        {
+          siteId: 'tenshoku-kaigi',
+          reviews: [
+            {
+              reviewType: 'company-review',
+              title: '社風',
+              content: '複数サイト導入用の评论',
+              url: 'https://jobtalk.jp/companies/3894/answers/2',
+            },
+          ],
+        },
+      ],
+    }),
+  });
   const importResult = await importResponse.json();
   assert.equal(importResponse.status, 201);
   assert.equal(importResult.reviews.length, 1);

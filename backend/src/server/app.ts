@@ -60,16 +60,9 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
     response.status(201).json(result);
   });
 
-  // 登录采集器读取完整评论，再按站点导入本地数据库并生成分析。
-  app.post('/api/imports/:siteId', async (request, response) => {
-    const site = getImportableSiteDefinition(request.params.siteId);
-
-    if (!site) {
-      response.status(404).json({ error: 'Unsupported import site' });
-      return;
-    }
-
-    const validation = parseImportedReviewsRequest(request.body, site);
+  // 采集器读取多个站点的完整评论后，统一导入本地数据库并生成一份合并分析。
+  app.post('/api/imports', async (request, response) => {
+    const validation = parseImportedSiteReviewsRequest(request.body);
 
     if (!validation.ok) {
       response.status(400).json({ error: validation.error });
@@ -216,6 +209,66 @@ function parseImportedReviewsRequest(
     }
 
     reviews.push(review);
+  }
+
+  return { ok: true, value: { company, reviews } };
+}
+
+// 校验多站点完整评论导入请求，把每个站点的评论按对应导入规则转换后合并。
+// 这里保留每条评论的 source 字段，合并只是为了生成同一份公司综合分析。
+function parseImportedSiteReviewsRequest(body: unknown): ImportedReviewsValidation {
+  if (!isRecord(body)) {
+    return { ok: false, error: 'Request body must be a JSON object' };
+  }
+
+  const company = typeof body.company === 'string' ? body.company.trim() : '';
+
+  if (!company) {
+    return { ok: false, error: 'company is required' };
+  }
+
+  if (!Array.isArray(body.siteImports) || body.siteImports.length < 1) {
+    return { ok: false, error: 'siteImports must contain at least one item' };
+  }
+
+  const reviews: CompanyReview[] = [];
+  const seenSiteIds = new Set<string>();
+
+  for (const value of body.siteImports) {
+    if (!isRecord(value)) {
+      return { ok: false, error: 'siteImports contains an invalid item' };
+    }
+
+    const siteId = typeof value.siteId === 'string' ? value.siteId.trim() : '';
+    const site = getImportableSiteDefinition(siteId);
+
+    if (!site) {
+      return { ok: false, error: 'siteImports contains an unsupported site' };
+    }
+
+    if (seenSiteIds.has(siteId)) {
+      return { ok: false, error: 'siteImports contains a duplicate site' };
+    }
+
+    seenSiteIds.add(siteId);
+
+    const validation = parseImportedReviewsRequest(
+      {
+        company,
+        reviews: value.reviews,
+      },
+      site,
+    );
+
+    if (!validation.ok) {
+      return { ok: false, error: validation.error };
+    }
+
+    reviews.push(...validation.value.reviews);
+  }
+
+  if (reviews.length < 1 || reviews.length > 500) {
+    return { ok: false, error: 'reviews must contain 1 to 500 items' };
   }
 
   return { ok: true, value: { company, reviews } };

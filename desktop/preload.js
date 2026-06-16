@@ -7,9 +7,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('jobReviewAggregator', {
   collectSiteReviews(input) {
     return ipcRenderer.invoke('collect-site-reviews', input);
-  },// 这里的调用都是在app js里接住消息的
-  importReviews(payload) {
-    return ipcRenderer.invoke('import-reviews', payload);
   },
   getSettings() {
     return ipcRenderer.invoke('get-settings');
@@ -22,11 +19,5 @@ contextBridge.exposeInMainWorld('jobReviewAggregator', {
   },
   clearDatabase(confirmText) {
     return ipcRenderer.invoke('clear-database', confirmText);
-  },
-  finishCollection(payload) {
-    ipcRenderer.send('collection-finished', payload);
-  },
-  failCollection(payload) {
-    ipcRenderer.send('collection-failed', payload);
   },
 });
