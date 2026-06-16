@@ -56,7 +56,7 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
     response.status(201).json(result);
   });
 
-  // 普通 Chrome 扩展使用当前登录会话读取评论，再通过该接口导入本地数据库。
+  // 桌面采集器读取登录后评论，再通过该接口导入本地数据库。
   app.post('/api/imports/tenshoku-kaigi', async (request, response) => {
     const validation = parseImportedReviewsRequest(request.body);
 

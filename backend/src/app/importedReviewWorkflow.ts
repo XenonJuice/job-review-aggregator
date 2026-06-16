@@ -8,7 +8,7 @@ export interface ImportedReviewWorkflowRequest {
   reviews: CompanyReview[];
 }
 
-// 浏览器扩展只负责读取用户当前可见的评论，持久化和分析仍由后台统一处理。
+// 桌面采集器只负责读取用户当前可见的评论，持久化和分析仍由后台统一处理。
 export class ImportedReviewWorkflow {
   constructor(
     private readonly repository: ReviewRepository,

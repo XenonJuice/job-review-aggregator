@@ -1,10 +1,8 @@
 import { AiProvider, analyzeCompany } from '../ai/provider';
-import { BrowserSessionStore } from '../browser/session';
 import { CompanyAnalysis, CompanyReview, SiteId } from '../domain/types';
 import { ReviewRepository } from '../storage/repository';
 import { JobReviewSitePlugin } from '../sites/sitePlugin';
 
-// MVP 工作流请求来自 CLI 或未来的后端 API。
 export interface MvpWorkflowRequest {
   companyQuery: string;
   selectedSiteIds: SiteId[];
@@ -17,16 +15,14 @@ export interface MvpWorkflowResult {
   analysis: CompanyAnalysis;
 }
 
-// MvpWorkflow 是第一阶段的用例编排层，集中串起插件、会话、存储和 AI。
 export class MvpWorkflow {
   constructor(
     private readonly plugins: JobReviewSitePlugin[],
-    private readonly sessions: BrowserSessionStore,
     private readonly repository: ReviewRepository,
     private readonly aiProvider: AiProvider,
   ) {}
 
-  // run 执行完整链路：记录搜索、登录/恢复、搜索公司、读取评论、AI 分析、保存结果。
+  // run 执行公开页面分析链路：搜索公司、读取公开评论、AI 分析、保存结果。
   async run(request: MvpWorkflowRequest): Promise<MvpWorkflowResult> {
     await this.repository.saveSearch(request.companyQuery);
 
@@ -36,18 +32,8 @@ export class MvpWorkflow {
     });
     const reviews: CompanyReview[] = [];
 
-    // 每个站点独立恢复会话和读取数据，方便后续并行化或错误隔离。
     for (const plugin of selectedPlugins) {
-      const restoredSession = await this.sessions.restore(plugin.id);
-      const loggedInSession = await plugin.login({
-        session: restoredSession,
-        preferredAuthMethods: plugin.supportedAuthMethods.slice(),
-      });
-
-      await this.sessions.persist(loggedInSession);
-
-      // 先取最高置信度候选；后续 UI 可以让用户手动选择公司。
-      const companies = await plugin.searchCompany(loggedInSession, {
+      const companies = await plugin.searchCompany({
         query: request.companyQuery,
       });
       const bestCompany = companies[0];
@@ -57,7 +43,6 @@ export class MvpWorkflow {
       }
 
       const siteReviews = await plugin.fetchCompanyReviews({
-        session: loggedInSession,
         company: bestCompany,
         maxPages: request.maxPages,
       });
@@ -77,7 +62,6 @@ export class MvpWorkflow {
 
     await this.repository.saveAnalysis(analysis);
 
-    // 返回完整结果，供 CLI 输出或前端页面渲染。
     return {
       reviews,
       analysis,

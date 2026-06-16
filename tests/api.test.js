@@ -8,28 +8,64 @@ const { MvpWorkflow } = require('../dist/backend/app/mvpWorkflow');
 const {
   ImportedReviewWorkflow,
 } = require('../dist/backend/app/importedReviewWorkflow');
-const {
-  InMemoryBrowserSessionStore,
-} = require('../dist/backend/browser/session');
 const { createApiApp } = require('../dist/backend/server/app');
 const {
   SiteLoginRequiredError,
 } = require('../dist/backend/sites/siteErrors');
-const {
-  InMemoryReviewRepository,
-} = require('../dist/backend/storage/repository');
+
+class TestReviewRepository {
+  searches = [];
+  reviews = [];
+  analyses = [];
+
+  async saveSearch(query) {
+    const record = {
+      id: `${Date.now()}-${this.searches.length + 1}`,
+      query,
+      createdAt: new Date().toISOString(),
+    };
+    this.searches.push(record);
+    return record;
+  }
+
+  async saveReviews(reviews) {
+    this.reviews.push(...reviews);
+  }
+
+  async saveAnalysis(analysis) {
+    this.analyses.push(analysis);
+  }
+
+  async listSearches(limit = 20) {
+    return this.searches.slice(-limit).reverse();
+  }
+
+  async listAnalyses(limit = 20) {
+    return this.analyses.slice(-limit).reverse().map((analysis, index) => {
+      return {
+        id: `${index + 1}`,
+        company: analysis.company,
+        provider: analysis.provider,
+        createdAt: new Date().toISOString(),
+        summary: analysis.overallSummary,
+      };
+    });
+  }
+
+  async clearAll() {
+    this.searches.length = 0;
+    this.reviews.length = 0;
+    this.analyses.length = 0;
+  }
+}
 
 test('API runs an analysis and exposes persisted history', async (context) => {
-  const repository = new InMemoryReviewRepository();
+  const repository = new TestReviewRepository();
   // 集成测试使用确定性的假插件，不访问真实网站或用户浏览器 profile。
   const sitePlugin = {
     id: 'tenshoku-kaigi',
     displayName: '転職会議',
-    supportedAuthMethods: ['password'],
-    async login({ session }) {
-      return { ...session, restored: true };
-    },
-    async searchCompany(_session, input) {
+    async searchCompany(input) {
       return [
         {
           siteId: 'tenshoku-kaigi',
@@ -53,7 +89,6 @@ test('API runs an analysis and exposes persisted history', async (context) => {
   };
   const workflow = new MvpWorkflow(
     [sitePlugin],
-    new InMemoryBrowserSessionStore(),
     repository,
     new MockAiProvider(),
   );
@@ -152,7 +187,7 @@ test('API runs an analysis and exposes persisted history', async (context) => {
 });
 
 test('API returns a readable conflict when site login is required', async (context) => {
-  const repository = new InMemoryReviewRepository();
+  const repository = new TestReviewRepository();
   const workflow = {
     async run() {
       throw new SiteLoginRequiredError('Please sign in');

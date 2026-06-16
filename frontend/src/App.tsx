@@ -389,7 +389,7 @@ export default function App() {
         </div>
         <span className="status-pill">
           <span className="status-dot" />
-          Local MVP
+          Desktop App
         </span>
       </header>
 
@@ -688,8 +688,7 @@ export default function App() {
       </main>
 
       <footer>
-        数据保存在本机 SQLite 中。当前网站抓取与 AI 分析仍为 MVP
-        占位实现。
+        数据保存在本机 SQLite 中。当前 AI 分析使用本地 Mock Provider。
       </footer>
     </div>
   );

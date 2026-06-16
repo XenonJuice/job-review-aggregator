@@ -1,11 +1,10 @@
-import { BrowserSession } from '../browser/session';
 import {
   CompanyReview,
   CompanySearchInput,
   CompanySearchResult,
   ReviewType,
 } from '../domain/types';
-import { FetchReviewsRequest, JobReviewSitePlugin, LoginRequest } from './sitePlugin';
+import { FetchReviewsRequest, JobReviewSitePlugin } from './sitePlugin';
 import { SiteLoginRequiredError } from './siteErrors';
 
 const SITE_ID = 'tenshoku-kaigi';
@@ -52,35 +51,22 @@ type AnswerNode = {
 export class TenshokuKaigiPlugin implements JobReviewSitePlugin {
   readonly id = SITE_ID;
   readonly displayName = DISPLAY_NAME;
-  readonly supportedAuthMethods = ['password', 'google-oauth', 'mfa'] as const;
-
-  // 公开页面抓取不依赖登录；需要会员权限的页面会在请求时返回明确错误。
-  async login(request: LoginRequest): Promise<BrowserSession> {
-    return {
-      ...request.session,
-      restored: true,
-    };
-  }
 
   // 検索結果の構造化 JSON から会社候補を抽出し、入力名との一致度が高い順に返す。
-  async searchCompany(
-    session: BrowserSession,
-    input: CompanySearchInput,
-  ): Promise<CompanySearchResult[]> {
+  async searchCompany(input: CompanySearchInput): Promise<CompanySearchResult[]> {
     const query = input.query.trim();
 
     if (!query) {
       return [];
     }
 
-    void session;
     const nextData = await fetchNextData(
       `${BASE_URL}/companies/search?keyword=${encodeURIComponent(query)}`,
     );
     return extractCompanySearchResults(nextData, query);
   }
 
-  // 会員が閲覧できる口コミページだけを読み、指定ページ数の範囲で共通形式へ正規化する。
+  // 公開ページで取得できる口コミを、指定ページ数の範囲で共通形式へ正規化する。
   async fetchCompanyReviews(request: FetchReviewsRequest): Promise<CompanyReview[]> {
     const companyId = parseCompanyId(request.company.companyUrl);
 
@@ -88,7 +74,6 @@ export class TenshokuKaigiPlugin implements JobReviewSitePlugin {
       return [];
     }
 
-    void request.session;
     const reviews: CompanyReview[] = [];
     const seenAnswerIds = new Set<number>();
 
@@ -136,7 +121,7 @@ async function fetchNextData(url: string): Promise<NextData> {
 
   if (response.url.includes('sign_in')) {
     throw new SiteLoginRequiredError(
-      '该页面需要転職会議会员权限，请在普通 Chrome 中登录后使用扩展采集。',
+      '该页面需要転職会議会员权限，请使用桌面 App 的“读取登录后完整评论”。',
     );
   }
 

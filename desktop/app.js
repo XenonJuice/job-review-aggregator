@@ -54,9 +54,6 @@ async function startIntegratedServer() {
     ImportedReviewWorkflow,
   } = require('../dist/backend/app/importedReviewWorkflow');
   const { MvpWorkflow } = require('../dist/backend/app/mvpWorkflow');
-  const {
-    FileSystemBrowserSessionStore,
-  } = require('../dist/backend/browser/session');
   const { createApiApp } = require('../dist/backend/server/app');
   const {
     TenshokuKaigiPlugin,
@@ -74,12 +71,8 @@ async function startIntegratedServer() {
   );
   activeRepository = repository;
   const aiProvider = new MockAiProvider();
-  const sessions = new FileSystemBrowserSessionStore(
-    path.join(userDataPath, 'browser-profiles'),
-  );
   const workflow = new MvpWorkflow(
     [new TenshokuKaigiPlugin()],
-    sessions,
     repository,
     aiProvider,
   );

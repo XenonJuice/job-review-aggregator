@@ -53,7 +53,7 @@ export async function analyzeCompany(request: AnalysisRequest): Promise<CompanyA
   // 来源列表用于报告中展示多站点汇总覆盖范围。
   request.reviews.forEach((review) => sourceSet.add(review.source));
 
-  // 当前 MVP 先复用原始输出填充所有板块，真实解析器会拆成独立字段。
+  // 当前先复用原始输出填充所有板块，后续真实解析器会拆成独立字段。
   return {
     company: request.company,
     provider: request.provider.name,
