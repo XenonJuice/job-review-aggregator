@@ -116,12 +116,12 @@ async function fetchNextData(url: string): Promise<NextData> {
   });
 
   if (!response.ok) {
-    throw new Error(`転職会議请求失败：HTTP ${response.status}`);
+    throw new Error(`${DISPLAY_NAME}请求失败：HTTP ${response.status}`);
   }
 
   if (response.url.includes('sign_in')) {
     throw new SiteLoginRequiredError(
-      '该页面需要転職会議会员权限，请使用桌面 App 的“读取登录后完整评论”。',
+      `该页面需要${DISPLAY_NAME}会员权限，请使用桌面 App 的“读取登录后完整评论”。`,
     );
   }
 

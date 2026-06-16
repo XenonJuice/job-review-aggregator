@@ -5,16 +5,24 @@ const path = require('node:path');
 const JobTalkParser = require('./jobtalkParser');
 
 const FRONTEND_URL = process.env.FRONTEND_URL;
-const JOBTALK_HOME_URL = 'https://jobtalk.jp/';
-let localImportUrl = 'http://127.0.0.1:3000/api/imports/tenshoku-kaigi';
-const BASE_URL = 'https://jobtalk.jp';
+const SITES = {
+  'tenshoku-kaigi': {
+    id: 'tenshoku-kaigi',
+    displayName: '転職会議',
+    baseUrl: 'https://jobtalk.jp',
+    homeUrl: 'https://jobtalk.jp/',
+    importPath: '/api/imports/tenshoku-kaigi',
+  },
+};
+const DEFAULT_SITE = SITES['tenshoku-kaigi'];
+let localImportUrl = `http://127.0.0.1:3000${DEFAULT_SITE.importPath}`;
 let mainWindow;
 let integratedListener;
 let activeRepository;
 
 class LoginRequiredError extends Error {
-  constructor() {
-    super('请在弹出的転職会議窗口中完成登录。登录完成后会自动继续采集。');
+  constructor(site = DEFAULT_SITE) {
+    super(`请在弹出的${site.displayName}窗口中完成登录。登录完成后会自动继续采集。`);
   }
 }
 
@@ -103,11 +111,12 @@ async function startIntegratedServer() {
     throw new Error('Failed to start integrated desktop server');
   }
 
-  localImportUrl = `http://127.0.0.1:${address.port}/api/imports/tenshoku-kaigi`;
+  localImportUrl = `http://127.0.0.1:${address.port}${DEFAULT_SITE.importPath}`;
   return `http://127.0.0.1:${address.port}`;
 }
 
 async function openCollectorWindow(input) {
+  const site = DEFAULT_SITE;
   const companyQuery = String(input?.companyQuery ?? '').trim();
   const maxPages = Number(input?.maxPages ?? 1);
 
@@ -119,7 +128,7 @@ async function openCollectorWindow(input) {
   }
 
   try {
-    return await collectAndImportReviews({ companyQuery, maxPages });
+    return await collectAndImportReviews({ site, companyQuery, maxPages });
   } catch (error) {
     if (!(error instanceof LoginRequiredError)) {
       throw error;
@@ -131,7 +140,7 @@ async function openCollectorWindow(input) {
     const window = new BrowserWindow({
       width: 1280,
       height: 900,
-      title: '転職会議 登录读取',
+      title: `${site.displayName} 登录读取`,
       webPreferences: {
         preload: path.join(__dirname, 'preload.js'),
         nodeIntegration: false,
@@ -156,16 +165,17 @@ async function openCollectorWindow(input) {
     });
 
     window.webContents.on('did-finish-load', () => {
-      if (isJobTalkPage(window.webContents.getURL())) {
+      if (isSitePage(site, window.webContents.getURL())) {
+        // 登录提示使用当前站点 displayName，避免新增网站时残留硬编码文案。
         void showCollectorStatus(
           window,
-          '请在此窗口完成転職会議登录。登录后会自动继续搜索和读取评论。',
+          `请在此窗口完成${site.displayName}登录。登录后会自动继续搜索和读取评论。`,
         );
       }
     });
 
     const timer = setInterval(() => {
-      collectAndImportReviews({ companyQuery, maxPages })
+      collectAndImportReviews({ site, companyQuery, maxPages })
         .then((result) => {
           settled = true;
           clearInterval(timer);
@@ -194,7 +204,7 @@ async function openCollectorWindow(input) {
       }
     });
 
-    void window.loadURL(JOBTALK_HOME_URL).catch((error) => {
+    void window.loadURL(site.homeUrl).catch((error) => {
       if (!isNavigationAbort(error)) {
         settled = true;
         reject(error);
@@ -216,10 +226,11 @@ function isHttpUrl(rawUrl) {
   }
 }
 
-function isJobTalkPage(rawUrl) {
+function isSitePage(site, rawUrl) {
   try {
     const hostname = new URL(rawUrl).hostname;
-    return hostname === 'jobtalk.jp' || hostname.endsWith('.jobtalk.jp');
+    const siteHostname = new URL(site.baseUrl).hostname;
+    return hostname === siteHostname || hostname.endsWith(`.${siteHostname}`);
   } catch {
     return false;
   }
@@ -277,9 +288,10 @@ async function showCollectorStatus(window, message) {
   `);
 }
 
-async function collectAndImportReviews({ companyQuery, maxPages }) {
+async function collectAndImportReviews({ site, companyQuery, maxPages }) {
   const searchData = await fetchNextData(
-    `${BASE_URL}/companies/search?keyword=${encodeURIComponent(companyQuery)}`,
+    `${site.baseUrl}/companies/search?keyword=${encodeURIComponent(companyQuery)}`,
+    site,
   );
   const company = JobTalkParser.extractCompanyCandidates(
     searchData,
@@ -295,11 +307,12 @@ async function collectAndImportReviews({ companyQuery, maxPages }) {
 
   for (let page = 1; page <= maxPages; page += 1) {
     const nextData = await fetchNextData(
-      `${BASE_URL}/companies/${company.id}/answers?page=${page}`,
+      `${site.baseUrl}/companies/${company.id}/answers?page=${page}`,
+      site,
     );
 
     if (!JobTalkParser.isLoggedIn(nextData)) {
-      throw new LoginRequiredError();
+      throw new LoginRequiredError(site);
     }
 
     const answers = JobTalkParser.extractAnswerNodes(nextData);
@@ -342,7 +355,7 @@ async function collectAndImportReviews({ companyQuery, maxPages }) {
   };
 }
 
-async function fetchNextData(url) {
+async function fetchNextData(url, site = DEFAULT_SITE) {
   const response = await session.defaultSession.fetch(url, {
     redirect: 'follow',
     headers: {
@@ -352,10 +365,10 @@ async function fetchNextData(url) {
   });
 
   if (!response.ok) {
-    throw new Error(`転職会議请求失败：HTTP ${response.status}`);
+    throw new Error(`${site.displayName}请求失败：HTTP ${response.status}`);
   }
   if (response.url.includes('sign_in')) {
-    throw new LoginRequiredError();
+    throw new LoginRequiredError(site);
   }
 
   return JobTalkParser.parseNextData(await response.text());

@@ -6,6 +6,7 @@ import {
 } from '../app/mvpWorkflow';
 import { ImportedReviewWorkflowRequest } from '../app/importedReviewWorkflow';
 import { CompanyReview, ReviewType, SiteId } from '../domain/types';
+import { AVAILABLE_SITES } from '../sites/availableSites';
 import { SiteLoginRequiredError } from '../sites/siteErrors';
 import { ReviewRepository } from '../storage/repository';
 
@@ -22,13 +23,6 @@ export interface ApiDependencies {
   importedReviewWorkflow: ImportedReviewWorkflowRunner;
   repository: ReviewRepository;
 }
-
-const AVAILABLE_SITES = [
-  {
-    id: 'tenshoku-kaigi' as const,
-    displayName: '転職会議',
-  },
-];
 
 export function createApiApp(dependencies: ApiDependencies): express.Express {
   const app = express();
