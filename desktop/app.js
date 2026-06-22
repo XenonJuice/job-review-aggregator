@@ -2,20 +2,9 @@ const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
 const { appendFileSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
 const express = require('express');
 const path = require('node:path');
-const JobTalkParser = require('./jobtalkParser');
+const { TARGET_REVIEW_SITES } = require('./sitesInfo');
 
 const FRONTEND_URL = process.env.FRONTEND_URL;
-// todo 添加其他站点
-const TARGET_REVIEW_SITES = {
-  'tenshoku-kaigi': {
-    id: 'tenshoku-kaigi',
-    displayName: '転職会議',
-    baseUrl: 'https://jobtalk.jp',
-    homeUrl: 'https://jobtalk.jp/',
-    loginCheckUrl: 'https://jobtalk.jp/companies/2513/answers?page=1',
-    parser: JobTalkParser,
-  },
-};
 let localApiBaseUrl = 'http://127.0.0.1:3000';
 let mainWindow;
 let integratedListener;
@@ -304,7 +293,7 @@ async function collectAndImportSiteReviews(input) {
 async function isSiteLoggedIn(site) {
   try {
     const nextData = await fetchSiteNextData(
-      site.loginCheckUrl ?? site.homeUrl,
+      site.loginCheckUrl,
       site,
     );
     return site.parser.isLoggedIn(nextData);
@@ -319,6 +308,8 @@ async function isSiteLoggedIn(site) {
 async function openSiteLoginWindow(site) {
   return new Promise((resolve, reject) => {
     let settled = false;
+    let loginDetected = false;
+    let visitedLoginPage = false;
     const window = new BrowserWindow({
       width: 1280,
       height: 900,
@@ -345,29 +336,59 @@ async function openSiteLoginWindow(site) {
       void shell.openExternal(url);
     });
 
-    window.webContents.on('did-finish-load', () => {
-      if (isSitePage(site, window.webContents.getURL())) {
-        void showLoginWindowStatus(
-          window,
-          `请在此窗口完成${site.displayName}登录。登录完成后会自动继续检查下一个网站。`,
-        );
+    let closeTimer;
+    let timer;
+    const resolveLogin = () => {
+      if (settled) {
+        return;
       }
-    });
 
-    const timer = setInterval(() => {
+      settled = true;
+      if (timer) {
+        clearInterval(timer);
+      }
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+      }
+      resolve();
+      if (!window.isDestroyed()) {
+        window.close();
+      }
+    };
+    const completeLogin = async () => {
+      if (loginDetected || settled) {
+        return;
+      }
+
+      loginDetected = true;
+      if (timer) {
+        clearInterval(timer);
+      }
+      await showLoginWindowStatus(
+        window,
+        `${site.displayName}登录成功。此窗口将在 3 秒后自动关闭。`,
+      ).catch(() => undefined);
+      closeTimer = setTimeout(resolveLogin, 3_000);
+    };
+
+    const checkLoginStatus = () => {
       isSiteLoggedIn(site)
         .then((loggedIn) => {
-          if (!loggedIn) {
+          if (loggedIn) {
+            void completeLogin();
+          }
+        })
+        .catch((error) => {
+          if (loginDetected) {
             return;
           }
 
-          settled = true;
-          clearInterval(timer);
-          resolve();
-          window.close();
-        })
-        .catch((error) => {
-          clearInterval(timer);
+          if (timer) {
+            clearInterval(timer);
+          }
+          if (closeTimer) {
+            clearTimeout(closeTimer);
+          }
           void showLoginWindowStatus(
             window,
             error instanceof Error ? error.message : String(error),
@@ -375,10 +396,45 @@ async function openSiteLoginWindow(site) {
           settled = true;
           reject(error);
         });
-    }, 3_000);
+    };
+
+    window.webContents.on('did-finish-load', () => {
+      const currentUrl = window.webContents.getURL();
+
+      if (currentUrl.includes('sign_in')) {
+        visitedLoginPage = true;
+      }
+
+      if (
+        visitedLoginPage &&
+        isSitePage(site, currentUrl) &&
+        !currentUrl.includes('sign_in')
+      ) {
+        void completeLogin();
+        return;
+      }
+
+      if (!loginDetected && isSitePage(site, currentUrl)) {
+        void showLoginWindowStatus(
+          window,
+          `请在此窗口完成${site.displayName}登录。登录完成后会自动继续检查下一个网站。`,
+        );
+      }
+
+      checkLoginStatus();
+    });
+
+    timer = setInterval(checkLoginStatus, 3_000);
 
     window.once('closed', () => {
       clearInterval(timer);
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+      }
+      if (loginDetected) {
+        resolveLogin();
+        return;
+      }
       if (!settled) {
         reject(new Error('登录窗口已关闭。'));
       }
