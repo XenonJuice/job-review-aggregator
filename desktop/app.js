@@ -2,6 +2,12 @@ const { app, BrowserWindow, ipcMain, session, shell } = require('electron');
 const { appendFileSync, existsSync, readFileSync, writeFileSync } = require('node:fs');
 const express = require('express');
 const path = require('node:path');
+const {
+  LOGIN_CHECK_INTERVAL_MS,
+  LOGIN_SUCCESS_CLOSE_DELAY_MS,
+  LOGIN_WINDOW_HEIGHT,
+  LOGIN_WINDOW_WIDTH,
+} = require('./constants');
 const { TARGET_REVIEW_SITES } = require('./sitesInfo');
 
 const FRONTEND_URL = process.env.FRONTEND_URL;
@@ -310,31 +316,7 @@ async function openSiteLoginWindow(site) {
     let settled = false;
     let loginDetected = false;
     let visitedLoginPage = false;
-    const window = new BrowserWindow({
-      width: 1280,
-      height: 900,
-      title: `${site.displayName} 登录确认`,
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-      },
-    });
-
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      void window.loadURL(url).catch(() => undefined);
-      return { action: 'deny' };
-    });
-
-    window.webContents.on('will-navigate', (event, url) => {
-      if (isHttpUrl(url)) {
-        return;
-      }
-
-      event.preventDefault();
-      void shell.openExternal(url);
-    });
+    const window = createLoginWindow(`${site.displayName} 登录确认`);
 
     let closeTimer;
     let timer;
@@ -368,7 +350,7 @@ async function openSiteLoginWindow(site) {
         window,
         `${site.displayName}登录成功。此窗口将在 3 秒后自动关闭。`,
       ).catch(() => undefined);
-      closeTimer = setTimeout(resolveLogin, 3_000);
+      closeTimer = setTimeout(resolveLogin, LOGIN_SUCCESS_CLOSE_DELAY_MS);
     };
 
     const checkLoginStatus = () => {
@@ -424,7 +406,7 @@ async function openSiteLoginWindow(site) {
       checkLoginStatus();
     });
 
-    timer = setInterval(checkLoginStatus, 3_000);
+    timer = setInterval(checkLoginStatus, LOGIN_CHECK_INTERVAL_MS);
 
     window.once('closed', () => {
       clearInterval(timer);
@@ -458,6 +440,7 @@ async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
   try {
     return await collectReviewsFromSite({ site, companyQuery, maxPages });
   } catch (error) {
+    // 未登陆以外的情况而无法进行时，抛出
     if (!(error instanceof LoginRequiredError)) {
       throw error;
     }
@@ -465,32 +448,7 @@ async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
 
   return new Promise((resolve, reject) => {
     let settled = false;
-    const window = new BrowserWindow({
-      width: 1280,
-      height: 900,
-      title: `${site.displayName} 登录读取`,
-      webPreferences: {
-        preload: path.join(__dirname, 'preload.js'),
-        nodeIntegration: false,
-        contextIsolation: true,
-        sandbox: true,
-      },
-    });
-
-    window.webContents.setWindowOpenHandler(({ url }) => {
-      void window.loadURL(url).catch(() => undefined);
-      return { action: 'deny' };
-    });
-
-    window.webContents.on('will-navigate', (event, url) => {
-      if (isHttpUrl(url)) {
-        return;
-      }
-
-      // 采集窗口保留网页登录跳转，只把非网页协议交给系统处理。
-      event.preventDefault();
-      void shell.openExternal(url);
-    });
+    const window = createLoginWindow(`${site.displayName} 登录读取`);
 
     window.webContents.on('did-finish-load', () => {
       if (isSitePage(site, window.webContents.getURL())) {
@@ -523,7 +481,7 @@ async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
           settled = true;
           reject(error);
         });
-    }, 3_000);
+    }, LOGIN_CHECK_INTERVAL_MS);
 
     window.once('closed', () => {
       clearInterval(timer);
@@ -724,6 +682,43 @@ async function importSiteReviewBatch(payload) {
   }
 
   return body;
+}
+
+function createLoginWindow(title) {
+  const window = new BrowserWindow({
+    width: LOGIN_WINDOW_WIDTH,
+    height: LOGIN_WINDOW_HEIGHT,
+    title,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+      sandbox: true,
+    },
+  });
+
+  redirectNewWindowsToCurrentWindow(window);
+  openExternalProtocolsInSystem(window);
+
+  return window;
+}
+
+function redirectNewWindowsToCurrentWindow(window) {
+  window.webContents.setWindowOpenHandler(({ url }) => {
+    void window.loadURL(url).catch(() => undefined);
+    return { action: 'deny' };
+  });
+}
+
+function openExternalProtocolsInSystem(window) {
+  window.webContents.on('will-navigate', (event, url) => {
+    if (isHttpUrl(url)) {
+      return;
+    }
+
+    event.preventDefault();
+    void shell.openExternal(url);
+  });
 }
 
 function isNavigationAbort(error) {
