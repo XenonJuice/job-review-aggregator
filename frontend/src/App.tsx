@@ -3,6 +3,7 @@ import {
   ArrowRight,
   Building2,
   Clock3,
+  CircleHelp,
   Database,
   LoaderCircle,
   Search,
@@ -15,8 +16,8 @@ import {
   AppSettings,
   clearDatabase,
   clearLoginCache,
-  collectSiteReviews,
   createAnalysis,
+  ensureSiteLogins,
   getAppSettings,
   getHistory,
   getSites,
@@ -47,7 +48,7 @@ export default function App() {
   const [searches, setSearches] = useState<SearchHistory[]>([]);
   const [analyses, setAnalyses] = useState<AnalysisHistory[]>([]);
   const [loading, setLoading] = useState(false);
-  const [collectingFullReviews, setCollectingFullReviews] = useState(false);
+  const [checkingSiteLogins, setCheckingSiteLogins] = useState(false);
   const [activeSource, setActiveSource] = useState('all');
   const [activeReviewType, setActiveReviewType] = useState('all');
   const [reviewPage, setReviewPage] = useState(1);
@@ -170,13 +171,13 @@ export default function App() {
         ? current.filter((currentSiteId) => currentSiteId !== siteId)
         : [...current, siteId],
     );
-    setSiteMessage('读取登录后完整评论时，应用会自动打开登录窗口。');
+    setSiteMessage('检查登录状态时，应用会按已选网站依次打开登录窗口。');
   }
 
-  async function handleCollectFullReviews() {
+  async function handleEnsureSiteLogins() {
     setError('');
     setSiteMessage('');
-    setCollectingFullReviews(true);
+    setCheckingSiteLogins(true);
 
     try {
       const siteIds = selectedSiteIds;
@@ -185,29 +186,23 @@ export default function App() {
         throw new Error('请至少选择一个评价网站。');
       }
 
-      const collectResult = await collectSiteReviews({
+      const loginResult = await ensureSiteLogins({
         siteIds,
-        companyQuery,
-        maxPages,
       });
-      const collectedSiteCount = collectResult.siteResults.length;
-      setResult({
-        reviews: collectResult.reviews,
-        analysis: collectResult.analysis,
-      });
-      setSiteMessage(
-        collectedSiteCount > 1
-          ? `已从 ${collectedSiteCount} 个网站导入 ${collectResult.company} 的 ${collectResult.reviewCount} 条登录后评论。`
-          : `已导入 ${collectResult.company} 的 ${collectResult.reviewCount} 条登录后评论。`,
-      );
+      const loginWindowCount = loginResult.siteResults.filter(
+        (siteResult) => siteResult.openedLoginWindow,
+      ).length;
+      const checkedSiteCount = loginResult.siteResults.length;
 
-      const history = await getHistory();
-      setSearches(history.searches);
-      setAnalyses(history.analyses);
-    } catch (collectError) {
-      setError(toErrorMessage(collectError));
+      setSiteMessage(
+        loginWindowCount > 0
+          ? `已完成 ${loginWindowCount} 个网站登录，${checkedSiteCount} 个已选网站可继续收集。`
+          : `已确认 ${checkedSiteCount} 个已选网站均处于登录状态。`,
+      );
+    } catch (loginError) {
+      setError(toErrorMessage(loginError));
     } finally {
-      setCollectingFullReviews(false);
+      setCheckingSiteLogins(false);
     }
   }
 
@@ -356,7 +351,19 @@ export default function App() {
                 </button>
 
                 <label>
-                  <span>输入“清除数据库”确认</span>
+                  <span className="settings-label-with-help">
+                    输入“清除数据库”确认
+                    <span
+                      aria-label="清除数据库会删除 AI 分析后的内容，重新生成分析可能会消耗你的 AI 额度。"
+                      className="settings-help"
+                      tabIndex={0}
+                    >
+                      <CircleHelp size={14} />
+                      <span className="settings-help-tooltip" role="tooltip">
+                        当前操作会删除 AI 分析后的内容，重新生成分析可能会消耗你的 AI 额度。
+                      </span>
+                    </span>
+                  </span>
                   <input
                     value={databaseConfirmText}
                     onChange={(event) => setDatabaseConfirmText(event.target.value)}
@@ -459,6 +466,7 @@ export default function App() {
               className="primary-button"
               disabled={
                 loading ||
+                checkingSiteLogins ||
                 companyQuery.trim().length === 0 ||
                 selectedSiteIds.length === 0
               }
@@ -467,11 +475,11 @@ export default function App() {
               {loading ? (
                 <>
                   <LoaderCircle className="spin" size={19} />
-                  正在分析
+                  正在收集
                 </>
               ) : (
                 <>
-                  开始分析
+                  开始收集
                   <ArrowRight size={19} />
                 </>
               )}
@@ -479,21 +487,21 @@ export default function App() {
             <button
               className="secondary-button"
               disabled={
-                collectingFullReviews ||
-                companyQuery.trim().length === 0 ||
+                checkingSiteLogins ||
+                loading ||
                 selectedSiteIds.length === 0
               }
-              onClick={() => void handleCollectFullReviews()}
+              onClick={() => void handleEnsureSiteLogins()}
               type="button"
             >
-              {collectingFullReviews ? (
+              {checkingSiteLogins ? (
                 <>
                   <LoaderCircle className="spin" size={19} />
-                  正在自动采集
+                  正在检查登录
                 </>
               ) : (
                 <>
-                  读取登录后完整评论
+                  检查登录状态
                   <ArrowRight size={19} />
                 </>
               )}

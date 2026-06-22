@@ -121,7 +121,7 @@ async function fetchNextData(url: string): Promise<NextData> {
 
   if (response.url.includes('sign_in')) {
     throw new SiteLoginRequiredError(
-      `该页面需要${DISPLAY_NAME}会员权限，请使用桌面 App 的“读取登录后完整评论”。`,
+      `该页面需要${DISPLAY_NAME}会员权限；当前“开始收集”只读取公开页面，登录后评论采集需要后续接入桌面采集流程。`,
     );
   }
 

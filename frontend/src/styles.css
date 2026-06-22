@@ -153,6 +153,58 @@ button {
   font-weight: 700;
 }
 
+.settings-label-with-help {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+}
+
+.settings-help {
+  position: relative;
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  color: #7a554f;
+  background: #fff8f4;
+  border: 1px solid #d8aaa1;
+  border-radius: 50%;
+  outline: 0;
+  place-items: center;
+}
+
+.settings-help:hover,
+.settings-help:focus-visible {
+  color: #aa3e35;
+  border-color: #aa3e35;
+}
+
+.settings-help-tooltip {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 50%;
+  z-index: 30;
+  width: 250px;
+  padding: 9px 10px;
+  color: #fff;
+  background: #25342f;
+  border-radius: 8px;
+  box-shadow: 0 10px 28px rgba(37, 52, 47, 0.2);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.5;
+  opacity: 0;
+  pointer-events: none;
+  transform: translate(-50%, 4px);
+  transition: opacity 140ms ease, transform 140ms ease;
+}
+
+.settings-help:hover .settings-help-tooltip,
+.settings-help:focus-visible .settings-help-tooltip {
+  opacity: 1;
+  transform: translate(-50%, 0);
+}
+
 .settings-section input,
 .settings-section select {
   width: 100%;

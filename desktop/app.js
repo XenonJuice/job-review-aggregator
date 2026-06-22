@@ -5,7 +5,7 @@ const path = require('node:path');
 const JobTalkParser = require('./jobtalkParser');
 
 const FRONTEND_URL = process.env.FRONTEND_URL;
-const SITE_COLLECTORS = {
+const TARGET_REVIEW_SITES = {
   'tenshoku-kaigi': {
     id: 'tenshoku-kaigi',
     displayName: '転職会議',
@@ -14,14 +14,13 @@ const SITE_COLLECTORS = {
     parser: JobTalkParser,
   },
 };
-const DEFAULT_SITE = getDefaultCollectorSite();
 let localApiBaseUrl = 'http://127.0.0.1:3000';
 let mainWindow;
 let integratedListener;
 let activeRepository;
 
 class LoginRequiredError extends Error {
-  constructor(site = DEFAULT_SITE) {
+  constructor(site) {
     super(`请在弹出的${site.displayName}窗口中完成登录。登录完成后会自动继续采集。`);
   }
 }
@@ -84,14 +83,14 @@ function registerAppLifecycleHandlers() {
 /**
  * 注册渲染进程可调用的 IPC 处理器。
  * IPC 处理器是 Electron 主进程里“接收前端请求并执行对应操作”的函数。
- * - collect-site-reviews：按传入的 siteIds 打开站点采集窗口并导入评论
+ * - ensure-site-logins：按传入的 siteIds 依次确认站点登录状态
  * - get-settings / save-settings：读取和保存本地设置
  * - clear-login-cache：清除 Electron 会话中的登录缓存
  * - clear-database：校验确认文本后清空本地数据库
  */
 function registerIpcHandlers() {
-  ipcMain.handle('collect-site-reviews', (_event, input) => {
-    return openCollectorWindow(input);
+  ipcMain.handle('ensure-site-logins', (_event, input) => {
+    return ensureSiteLogins(input);
   });
 
   ipcMain.handle('get-settings', () => {
@@ -219,8 +218,40 @@ async function startIntegratedServer() {
   return localApiBaseUrl;
 }
 
-async function openCollectorWindow(input) {
-  const sites = getCollectorSites(input?.siteIds ?? input?.siteId);
+/**
+ * 只确认所选站点的登录状态，不采集评论也不导入数据。
+ * 已登录的站点会直接跳过；未登录的站点会依次打开登录窗口，等待用户完成登录。
+ */
+async function ensureSiteLogins(input) {
+  const targetSites = getTargetSites(input?.siteIds ?? input?.siteId);
+  const siteResults = [];
+
+  for (const site of targetSites) {
+    const alreadyLoggedIn = await isSiteLoggedIn(site);
+
+    if (!alreadyLoggedIn) {
+      await openSiteLoginWindow(site);
+    }
+
+    siteResults.push({
+      siteId: site.id,
+      displayName: site.displayName,
+      loggedIn: true,
+      openedLoginWindow: !alreadyLoggedIn,
+    });
+  }
+
+  return { siteResults };
+}
+
+/**
+ * 按前端传入的站点列表采集登录后完整评论，并统一导入本地后台。
+ * 当前没有暴露给页面按钮；保留给后续真正接入“登录后完整评论采集”时复用。
+ * 每个站点会先尝试复用已有登录状态；未登录时交给 collectReviewsWithLogin 打开登录窗口。
+ * 返回值包含合并后的评论、分析结果，以及各站点本次采集到的评论数量。
+ */
+async function collectAndImportSiteReviews(input) {
+  const targetSites = getTargetSites(input?.siteIds ?? input?.siteId);
   const companyQuery = String(input?.companyQuery ?? '').trim();
   const maxPages = Number(input?.maxPages ?? 1);
 
@@ -231,24 +262,24 @@ async function openCollectorWindow(input) {
     throw new Error('页数必须是 1 到 10。');
   }
 
-  const collections = [];
+  const siteReviewResults = [];
 
-  for (const site of sites) {
-    collections.push(
+  for (const site of targetSites) {
+    siteReviewResults.push(
       await collectReviewsWithLogin({ site, companyQuery, maxPages }),
     );
   }
 
-  const company = collections[0]?.company ?? companyQuery;
-  const siteImports = collections.map((collection) => ({
-    siteId: collection.site.id,
-    reviews: collection.reviews,
+  const company = siteReviewResults[0]?.company ?? companyQuery;
+  const siteImports = siteReviewResults.map((siteReviewResult) => ({
+    siteId: siteReviewResult.site.id,
+    reviews: siteReviewResult.reviews,
   }));
   const reviewCount = siteImports.reduce(
     (total, siteImport) => total + siteImport.reviews.length,
     0,
   );
-  const imported = await importCollectedSiteReviews({
+  const importResult = await importSiteReviewBatch({
     company,
     siteImports,
   });
@@ -256,17 +287,112 @@ async function openCollectorWindow(input) {
   return {
     company,
     reviewCount,
-    reviews: imported.reviews,
-    analysis: imported.analysis,
-    siteResults: collections.map((collection) => ({
-      siteId: collection.site.id,
-      displayName: collection.site.displayName,
-      company: collection.company,
-      reviewCount: collection.reviews.length,
+    reviews: importResult.reviews,
+    analysis: importResult.analysis,
+    siteResults: siteReviewResults.map((siteReviewResult) => ({
+      siteId: siteReviewResult.site.id,
+      displayName: siteReviewResult.site.displayName,
+      company: siteReviewResult.company,
+      reviewCount: siteReviewResult.reviews.length,
     })),
   };
 }
 
+async function isSiteLoggedIn(site) {
+  try {
+    const nextData = await fetchSiteNextData(site.homeUrl, site);
+    return site.parser.isLoggedIn(nextData);
+  } catch (error) {
+    if (error instanceof LoginRequiredError) {
+      return false;
+    }
+
+    throw error;
+  }
+}
+
+async function openSiteLoginWindow(site) {
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const window = new BrowserWindow({
+      width: 1280,
+      height: 900,
+      title: `${site.displayName} 登录确认`,
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.js'),
+        nodeIntegration: false,
+        contextIsolation: true,
+        sandbox: true,
+      },
+    });
+
+    window.webContents.setWindowOpenHandler(({ url }) => {
+      void window.loadURL(url).catch(() => undefined);
+      return { action: 'deny' };
+    });
+
+    window.webContents.on('will-navigate', (event, url) => {
+      if (isHttpUrl(url)) {
+        return;
+      }
+
+      event.preventDefault();
+      void shell.openExternal(url);
+    });
+
+    window.webContents.on('did-finish-load', () => {
+      if (isSitePage(site, window.webContents.getURL())) {
+        void showLoginWindowStatus(
+          window,
+          `请在此窗口完成${site.displayName}登录。登录完成后会自动继续检查下一个网站。`,
+        );
+      }
+    });
+
+    const timer = setInterval(() => {
+      isSiteLoggedIn(site)
+        .then((loggedIn) => {
+          if (!loggedIn) {
+            return;
+          }
+
+          settled = true;
+          clearInterval(timer);
+          resolve();
+          window.close();
+        })
+        .catch((error) => {
+          clearInterval(timer);
+          void showLoginWindowStatus(
+            window,
+            error instanceof Error ? error.message : String(error),
+          );
+          settled = true;
+          reject(error);
+        });
+    }, 3_000);
+
+    window.once('closed', () => {
+      clearInterval(timer);
+      if (!settled) {
+        reject(new Error('登录窗口已关闭。'));
+      }
+    });
+
+    void window.loadURL(site.homeUrl).catch((error) => {
+      if (!isNavigationAbort(error)) {
+        settled = true;
+        reject(error);
+      }
+    });
+  });
+}
+
+/**
+ * 采集单个站点的登录后完整评论。
+ * 先直接使用当前 Electron session 里的登录状态采集；如果站点要求登录，
+ * 则打开该站点登录窗口，并每 3 秒重试一次采集，直到成功、报错或窗口被关闭。
+ */
 async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
   try {
     return await collectReviewsFromSite({ site, companyQuery, maxPages });
@@ -308,9 +434,9 @@ async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
     window.webContents.on('did-finish-load', () => {
       if (isSitePage(site, window.webContents.getURL())) {
         // 登录提示使用当前站点 displayName，避免新增网站时残留硬编码文案。
-        void showCollectorStatus(
+        void showLoginWindowStatus(
           window,
-          `请在此窗口完成${site.displayName}登录。登录后会自动继续搜索和读取评论。`,
+          `请在此窗口完成 ${site.displayName} 的登录。登录后本页面会自动关闭，请返回上层页面开始操作。`,
         );
       }
     });
@@ -329,7 +455,7 @@ async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
           }
 
           clearInterval(timer);
-          void showCollectorStatus(
+          void showLoginWindowStatus(
             window,
             error instanceof Error ? error.message : String(error),
           );
@@ -354,9 +480,15 @@ async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
   });
 }
 
+/**
+ * 从单个站点读取公司完整评论。
+ * 负责搜索最匹配的公司、按页读取评论数据、校验登录状态，并用 externalId 去重。
+ * 返回的 reviews 已去掉采集器内部使用的 externalId，可直接提交给后端导入。
+ */
 async function collectReviewsFromSite({ site, companyQuery, maxPages }) {
   const parser = site.parser;
-  const searchData = await fetchNextData(
+  const searchData = await fetchSiteNextData(
+    // TODO: 当前 URL 模板仍按転職会議页面结构拼接，新增站点时应下沉到站点配置或 parser。
     `${site.baseUrl}/companies/search?keyword=${encodeURIComponent(companyQuery)}`,
     site,
   );
@@ -373,7 +505,7 @@ async function collectReviewsFromSite({ site, companyQuery, maxPages }) {
   const seenIds = new Set();
 
   for (let page = 1; page <= maxPages; page += 1) {
-    const nextData = await fetchNextData(
+    const nextData = await fetchSiteNextData(
       `${site.baseUrl}/companies/${company.id}/answers?page=${page}`,
       site,
     );
@@ -416,7 +548,7 @@ async function collectReviewsFromSite({ site, companyQuery, maxPages }) {
   };
 }
 
-async function fetchNextData(url, site = DEFAULT_SITE) {
+async function fetchSiteNextData(url, site) {
   const response = await session.defaultSession.fetch(url, {
     redirect: 'follow',
     headers: {
@@ -435,7 +567,7 @@ async function fetchNextData(url, site = DEFAULT_SITE) {
   return site.parser.parseNextData(await response.text());
 }
 
-async function showCollectorStatus(window, message) {
+async function showLoginWindowStatus(window, message) {
   const safeMessage = JSON.stringify(message);
 
   await window.webContents.executeJavaScript(`
@@ -478,7 +610,7 @@ async function showCollectorStatus(window, message) {
             min-height: 32px;
           }
         </style>
-        <h2>自动读取登录后评论</h2>
+        <h2>登录状态确认</h2>
         <p id="jra-desktop-status"></p>
       \`;
       document.body.append(panel);
@@ -487,23 +619,27 @@ async function showCollectorStatus(window, message) {
   `);
 }
 
-function getCollectorSite(siteId) {
+function getTargetSite(siteId) {
   const normalizedSiteId = String(siteId ?? '').trim();
 
   if (!normalizedSiteId) {
     throw new Error('请选择评价网站。');
   }
 
-  const site = SITE_COLLECTORS[normalizedSiteId];
+  const site = TARGET_REVIEW_SITES[normalizedSiteId];
 
   if (!site) {
-    throw new Error(`暂不支持该网站的完整评论采集：${normalizedSiteId}`);
+    throw new Error(`暂不支持该网站的登录状态检查：${normalizedSiteId}`);
   }
 
   return site;
 }
 
-function getCollectorSites(siteIds) {
+/**
+ * 将前端传入的站点 ID 转成本次需要采集的目标站点列表。
+ * 支持单个 siteId 或 siteIds 数组；会去掉空值、去重，并校验站点是否已接入登录状态检查。
+ */
+function getTargetSites(siteIds) {
   const rawSiteIds = Array.isArray(siteIds) ? siteIds : [siteIds];
   const normalizedSiteIds = rawSiteIds
     .map((siteId) => String(siteId ?? '').trim())
@@ -514,21 +650,11 @@ function getCollectorSites(siteIds) {
   }
 
   return Array.from(new Set(normalizedSiteIds)).map((siteId) =>
-    getCollectorSite(siteId),
+    getTargetSite(siteId),
   );
 }
 
-function getDefaultCollectorSite() {
-  const [site] = Object.values(SITE_COLLECTORS);
-
-  if (!site) {
-    throw new Error('未配置完整评论采集网站。');
-  }
-
-  return site;
-}
-
-async function importCollectedSiteReviews(payload) {
+async function importSiteReviewBatch(payload) {
   const response = await fetch(`${localApiBaseUrl}/api/imports`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },

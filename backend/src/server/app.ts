@@ -133,7 +133,7 @@ const REVIEW_TYPES = new Set<ReviewType>([
   'exit-reason',
 ]);
 
-// 校验“开始分析”接口的请求体，把不可信的前台输入整理成业务层能用的数据。
+// 校验“开始收集”接口的请求体，把不可信的前台输入整理成业务层能用的数据。
 function parseAnalysisRequest(body: unknown): AnalysisRequestValidation {
   if (!isRecord(body)) {
     return { ok: false, error: 'Request body must be a JSON object' };

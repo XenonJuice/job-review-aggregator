@@ -41,14 +41,12 @@ export interface AnalysisHistory {
   summary: string;
 }
 
-export interface SiteCollectResult extends AnalysisResult {
-  company: string;
-  reviewCount: number;
+export interface SiteLoginResult {
   siteResults: Array<{
     siteId: SiteId;
     displayName: string;
-    company: string;
-    reviewCount: number;
+    loggedIn: boolean;
+    openedLoginWindow: boolean;
   }>;
 }
 
@@ -60,11 +58,9 @@ export interface AppSettings {
 }
 
 export interface AppBridge {
-  collectSiteReviews(input: {
+  ensureSiteLogins(input: {
     siteIds: SiteId[];
-    companyQuery: string;
-    maxPages: number;
-  }): Promise<SiteCollectResult>;
+  }): Promise<SiteLoginResult>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
   clearLoginCache(): Promise<{ ok: true }>;
@@ -78,16 +74,14 @@ declare global {
   }
 }
 
-export async function collectSiteReviews(input: {
+export async function ensureSiteLogins(input: {
   siteIds: SiteId[];
-  companyQuery: string;
-  maxPages: number;
-}): Promise<SiteCollectResult> {
+}): Promise<SiteLoginResult> {
   if (!window.jobReviewAggregator) {
     throw new Error('应用桥接未初始化，请重新打开应用。');
   }
 
-  return window.jobReviewAggregator.collectSiteReviews(input);
+  return window.jobReviewAggregator.ensureSiteLogins(input);
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
@@ -129,7 +123,7 @@ export async function getSites(): Promise<Site[]> {
   return result.sites;
 }
 
-// 请求本机后台打开站点登录窗口；浏览器本身不在前端页面进程中启动。
+// 请求本机后台按所选站点收集公开页面评论，并生成本地分析结果。
 export async function createAnalysis(input: {
   companyQuery: string;
   selectedSiteIds: SiteId[];

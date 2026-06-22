@@ -1,0 +1,1498 @@
+# Job Review Aggregator 启动和正常操作调用链说明
+
+这份说明按当前代码整理。程序整体是：
+
+Electron 桌面壳 + React 前端页面 + Express 后端 API + SQLite 本地数据库 + 网站插件 + AI Provider
+
+核心分层如下：
+
+- Electron 主进程：`desktop/app.js`
+- Electron preload：`desktop/preload.js`
+- 前端 React：`frontend/src/App.tsx`
+- 前端请求封装：`frontend/src/api.ts`
+- 后端 HTTP API：`backend/src/server/app.ts`
+- 后端启动入口：`backend/src/server/index.ts`
+- 普通公开页面分析 workflow：`backend/src/app/mvpWorkflow.ts`
+- 桌面导入完整评论 workflow：`backend/src/app/importedReviewWorkflow.ts`
+- 站点注册表：`backend/src/sites/siteRegistry.ts`
+- 转职会议公开页面插件：`backend/src/sites/tenshokuKaigi.ts`
+- 桌面转职会议 parser：`desktop/jobtalkParser.js`
+- SQLite 存储：`backend/src/storage/sqliteRepository.ts`
+- AI 抽象和分析入口：`backend/src/ai/provider.ts`
+- 当前 mock AI：`backend/src/ai/providers/mockAiProvider.ts`
+
+
+## 1. 启动方式总览
+
+这个项目有几种常见启动方式。
+
+### 1.1 桌面打包版或直接启动 Electron
+
+入口来自 `package.json`：
+
+```json
+"main": "desktop/app.js"
+```
+
+也就是说 Electron 启动时先执行：
+
+```txt
+desktop/app.js
+```
+
+如果没有 `FRONTEND_URL` 环境变量，`desktop/app.js` 会自己启动一个内置 Express 后端，并从 `dist/frontend` 加载打包后的前端页面。
+
+### 1.2 开发模式 `npm run desktop:dev`
+
+`package.json` 里是：
+
+```txt
+npm run desktop:dev
+  -> concurrently 同时启动三件事
+     -> npm run api
+     -> npm run web
+     -> node desktop/start-dev.js
+```
+
+展开后是：
+
+```txt
+npm run api
+  -> npm run build:server
+  -> node dist/backend/server/index.js
+
+npm run web
+  -> vite --config frontend/vite.config.ts
+
+node desktop/start-dev.js
+  -> waitForUrl("http://localhost:5173")
+  -> waitForUrl("http://127.0.0.1:3000/api/health")
+  -> spawn(electron, ["desktop/app.js"], env.FRONTEND_URL = "http://localhost:5173")
+```
+
+开发模式和打包版有一个重要区别：
+
+- 开发模式：后端 API 是 `backend/src/server/index.ts` 编译后的 `dist/backend/server/index.js` 启动的，固定监听 `3000`。
+- 打包版：后端 API 是 `desktop/app.js` 里的 `startIntegratedServer()` 启动的，监听随机本地端口。
+
+
+## 2. 打包版启动完整调用链
+
+打包版或没有 `FRONTEND_URL` 时，完整链路如下。
+
+```txt
+Electron 启动
+  -> 执行 desktop/app.js 顶层代码
+  -> app.setName("Job Review Aggregator")
+  -> app.requestSingleInstanceLock()
+  -> app.whenReady()
+  -> createMainWindow()
+  -> startIntegratedServer()
+  -> 创建 BrowserWindow
+  -> mainWindow.loadURL(frontendUrl)
+  -> preload.js 暴露 window.jobReviewAggregator
+  -> React main.tsx 渲染 App
+  -> App 初次加载数据
+```
+
+### 2.1 `desktop/app.js` 顶层初始化
+
+文件开头先准备桌面采集配置：
+
+```txt
+TARGET_REVIEW_SITES
+  -> 当前只有 "tenshoku-kaigi"
+  -> 配置 displayName/baseUrl/homeUrl/parser
+
+localApiBaseUrl = "http://127.0.0.1:3000"
+```
+
+这里的 `TARGET_REVIEW_SITES` 是需要被检查登录状态的网站注册表。后端公开抓取和导入校验的注册表在 `backend/src/sites/siteRegistry.ts`。
+
+### 2.2 Electron 生命周期
+
+```txt
+app.setName("Job Review Aggregator")
+  -> 设置应用名
+
+app.requestSingleInstanceLock()
+  -> 防止同时打开多个实例
+
+app.on("second-instance")
+  -> 如果再次启动，聚焦已有窗口
+
+app.whenReady().then(...)
+  -> createMainWindow()
+
+app.on("activate")
+  -> macOS 点击 Dock 后，如果没有窗口就重新 createMainWindow()
+
+app.on("window-all-closed")
+  -> app.quit()
+```
+
+如果启动失败：
+
+```txt
+createMainWindow().catch(...)
+  -> logStartupError(error)
+  -> 写入 app.getPath("userData")/startup-error.log
+  -> app.quit()
+```
+
+### 2.3 `createMainWindow()`
+
+调用链：
+
+```txt
+createMainWindow()
+  -> const frontendUrl = FRONTEND_URL ?? await startIntegratedServer()
+  -> new BrowserWindow(...)
+       -> preload: desktop/preload.js
+       -> nodeIntegration: false
+       -> contextIsolation: true
+       -> sandbox: true
+  -> mainWindow.once("ready-to-show")
+       -> mainWindow.show()
+       -> mainWindow.focus()
+  -> mainWindow.webContents.once("did-finish-load")
+       -> mainWindow.show()
+       -> mainWindow.focus()
+  -> mainWindow.on("closed")
+       -> mainWindow = undefined
+  -> mainWindow.loadURL(frontendUrl)
+```
+
+重点：
+
+- `FRONTEND_URL` 存在时，直接加载开发服务器页面。
+- `FRONTEND_URL` 不存在时，先调用 `startIntegratedServer()`，让桌面 App 自己启动本地后端和静态前端。
+
+### 2.4 `startIntegratedServer()`
+
+这是打包版内置后端的启动核心。
+
+调用链：
+
+```txt
+startIntegratedServer()
+  -> require("../dist/backend/ai/providers/mockAiProvider")
+  -> require("../dist/backend/app/importedReviewWorkflow")
+  -> require("../dist/backend/app/mvpWorkflow")
+  -> require("../dist/backend/server/app")
+  -> require("../dist/backend/sites/siteRegistry")
+  -> require("../dist/backend/storage/sqliteRepository")
+  -> const server = express()
+  -> const userDataPath = app.getPath("userData")
+  -> const schemaPath = "../backend/src/storage/schema.sql"
+  -> new SQLiteReviewRepository(userDataPath/app.sqlite, schemaPath)
+  -> activeRepository = repository
+  -> new MockAiProvider()
+  -> createSitePlugins()
+  -> new MvpWorkflow(sitePlugins, repository, aiProvider)
+  -> new ImportedReviewWorkflow(repository, aiProvider)
+  -> createApiApp({ workflow, importedReviewWorkflow, repository })
+  -> server.use(apiApp)
+  -> server.use(express.static("../dist/frontend"))
+  -> server.use(fallback sendFile("../dist/frontend/index.html"))
+  -> server.listen(0, "127.0.0.1")
+  -> localApiBaseUrl = "http://127.0.0.1:${randomPort}"
+  -> return localApiBaseUrl
+```
+
+其中 `server.listen(0, "127.0.0.1")` 的 `0` 表示让系统自动分配一个可用端口。
+
+### 2.5 创建 SQLite 仓库时发生什么
+
+```txt
+new SQLiteReviewRepository(dbPath, schemaPath)
+  -> mkdirSync(path.dirname(dbPath), { recursive: true })
+  -> new DatabaseSync(dbPath)
+  -> readFileSync(schemaPath, "utf8")
+  -> db.exec(schemaSql)
+```
+
+所以程序启动时会确保数据库目录存在，并执行 schema。schema 一般会用 `CREATE TABLE IF NOT EXISTS` 这类语句，因此重复启动不会清空数据。
+
+### 2.6 创建站点插件时发生什么
+
+```txt
+createSitePlugins()
+  -> SITE_DEFINITIONS.map(site => site.createPlugin())
+  -> 当前执行 new TenshokuKaigiPlugin()
+```
+
+站点注册表在：
+
+```txt
+backend/src/sites/siteRegistry.ts
+```
+
+当前内容只有：
+
+```txt
+tenshoku-kaigi
+  -> displayName: 転職会議
+  -> createPlugin: () => new TenshokuKaigiPlugin()
+  -> desktopImport.source: 転職会議
+  -> desktopImport.allowedUrlHosts: ["jobtalk.jp"]
+```
+
+### 2.7 创建 `MvpWorkflow` 时发生什么
+
+```txt
+new MvpWorkflow(sitePlugins, repository, aiProvider)
+  -> constructor(...)
+  -> this.pluginsBySiteId = new Map(plugin.id -> plugin)
+```
+
+这个 Map 让后续 `selectedSiteIds` 可以快速找到对应插件。
+
+### 2.8 创建 Express API 时发生什么
+
+```txt
+createApiApp({ workflow, importedReviewWorkflow, repository })
+  -> express()
+  -> app.use(cors())
+  -> app.use(express.json({ limit: "5mb" }))
+  -> 注册 GET /api/health
+  -> 注册 GET /api/sites
+  -> 注册 POST /api/analyses
+  -> 注册 POST /api/imports
+  -> 注册 GET /api/history/searches
+  -> 注册 GET /api/history/analyses
+  -> 注册统一错误处理中间件
+  -> return app
+```
+
+到这里为止，后端只是准备好接口，并不会主动抓网站。
+
+
+## 3. 开发模式启动完整调用链
+
+开发模式命令：
+
+```txt
+npm run desktop:dev
+```
+
+完整链路：
+
+```txt
+npm run desktop:dev
+  -> concurrently
+     -> npm run api
+     -> npm run web
+     -> node desktop/start-dev.js
+```
+
+### 3.1 后端开发服务
+
+```txt
+npm run api
+  -> npm run build:server
+       -> tsc -p backend/tsconfig.json
+       -> 输出 dist/backend
+  -> node dist/backend/server/index.js
+       -> 执行 backend/src/server/index.ts 编译后的 JS
+```
+
+`backend/src/server/index.ts` 的调用链：
+
+```txt
+parsePort(process.env.PORT)
+  -> 默认 3000
+
+dbPath = path.resolve(process.env.DB_PATH ?? "data/app.sqlite")
+
+new SQLiteReviewRepository(dbPath)
+new MockAiProvider()
+createSitePlugins()
+new MvpWorkflow(createSitePlugins(), repository, aiProvider)
+new ImportedReviewWorkflow(repository, aiProvider)
+createApiApp({ workflow, importedReviewWorkflow, repository })
+app.listen(port)
+```
+
+### 3.2 前端开发服务
+
+```txt
+npm run web
+  -> vite --config frontend/vite.config.ts
+  -> 默认前端地址 http://localhost:5173
+```
+
+### 3.3 Electron 开发启动器
+
+```txt
+node desktop/start-dev.js
+  -> waitForUrl("http://localhost:5173")
+  -> waitForUrl("http://127.0.0.1:3000/api/health")
+  -> spawn(electron, ["desktop/app.js"], env.FRONTEND_URL = "http://localhost:5173")
+```
+
+因为设置了 `FRONTEND_URL`，所以 Electron 里的 `createMainWindow()` 不会调用 `startIntegratedServer()`，而是直接：
+
+```txt
+createMainWindow()
+  -> frontendUrl = FRONTEND_URL
+  -> new BrowserWindow(...)
+  -> loadURL("http://localhost:5173")
+```
+
+开发模式下，后续桌面导入能力默认使用：
+
+```txt
+localApiBaseUrl = "http://127.0.0.1:3000"
+```
+
+也就是导入到 `npm run api` 启动的后端。
+
+
+## 4. 前端页面初次加载调用链
+
+Electron 窗口加载前端后，先执行：
+
+```txt
+frontend/src/main.tsx
+  -> createRoot(document.getElementById("root")!)
+  -> render(<App />)
+```
+
+然后进入：
+
+```txt
+frontend/src/App.tsx
+  -> App()
+```
+
+### 4.1 preload 暴露了哪些桌面能力
+
+`window.jobReviewAggregator` 是 `desktop/preload.js` 暴露的。
+
+```txt
+desktop/preload.js
+  -> contextBridge.exposeInMainWorld("jobReviewAggregator", ...)
+```
+
+暴露的方法：
+
+```txt
+ensureSiteLogins(input)
+  -> ipcRenderer.invoke("ensure-site-logins", input)
+
+getSettings()
+  -> ipcRenderer.invoke("get-settings")
+
+saveSettings(settings)
+  -> ipcRenderer.invoke("save-settings", settings)
+
+clearLoginCache()
+  -> ipcRenderer.invoke("clear-login-cache")
+
+clearDatabase(confirmText)
+  -> ipcRenderer.invoke("clear-database", confirmText)
+```
+
+### 4.2 首屏加载网站列表和历史记录
+
+`App.tsx` 里：
+
+```txt
+useEffect(() => { void loadInitialData(); }, [])
+```
+
+调用链：
+
+```txt
+loadInitialData()
+  -> Promise.all([
+       getSites(),
+       getHistory()
+     ])
+```
+
+`getSites()`：
+
+```txt
+getSites()
+  -> request("/api/sites")
+  -> fetch("/api/sites")
+  -> 后端 GET /api/sites
+  -> response.json({ sites: AVAILABLE_SITES })
+```
+
+后端：
+
+```txt
+GET /api/sites
+  -> AVAILABLE_SITES
+  -> backend/src/sites/availableSites.ts
+  -> SITE_DEFINITIONS.map(({ id, displayName }) => ({ id, displayName }))
+```
+
+`getHistory()`：
+
+```txt
+getHistory()
+  -> Promise.all([
+       request("/api/history/searches?limit=8"),
+       request("/api/history/analyses?limit=8")
+     ])
+```
+
+后端搜索历史：
+
+```txt
+GET /api/history/searches
+  -> parseHistoryLimit(request.query.limit)
+  -> repository.listSearches(limit)
+  -> SQLiteReviewRepository.listSearches(limit)
+  -> SELECT id, query, created_at FROM searches ORDER BY id DESC LIMIT ?
+  -> mapSearchRow(row)
+  -> response.json({ searches })
+```
+
+后端分析历史：
+
+```txt
+GET /api/history/analyses
+  -> parseHistoryLimit(request.query.limit)
+  -> repository.listAnalyses(limit)
+  -> SQLiteReviewRepository.listAnalyses(limit)
+  -> SELECT analyses JOIN companies ORDER BY analyses.id DESC LIMIT ?
+  -> response.json({ analyses })
+```
+
+加载成功后：
+
+```txt
+loadInitialData()
+  -> setSites(availableSites)
+  -> setSelectedSiteIds(availableSites.map(site => site.id))
+  -> setSearches(history.searches)
+  -> setAnalyses(history.analyses)
+```
+
+### 4.3 加载本地设置
+
+`App.tsx` 初始化时会加载本地设置：
+
+```txt
+useEffect(...)
+  -> loadAppSettings()
+  -> getAppSettings()
+  -> window.jobReviewAggregator.getSettings()
+  -> preload ipcRenderer.invoke("get-settings")
+  -> desktop/app.js ipcMain.handle("get-settings")
+  -> readSettings()
+  -> getSettingsPath()
+  -> existsSync(settingsPath)
+  -> readFileSync(settingsPath, "utf8")
+  -> JSON.parse(...)
+  -> sanitizeSettings(...)
+  -> setSettings(...)
+```
+
+如果 settings 文件不存在，默认返回：
+
+```txt
+{
+  aiProvider: "mock",
+  apiKey: "",
+  baseUrl: "",
+  model: ""
+}
+```
+
+
+## 5. 健康检查接口调用链
+
+开发启动器会用它确认 API 是否已经启动。
+
+```txt
+desktop/start-dev.js
+  -> waitForUrl("http://127.0.0.1:3000/api/health")
+  -> fetch(url)
+  -> 后端 GET /api/health
+  -> response.json({ status: "ok" })
+```
+
+它不访问数据库，不调用 AI，不抓网站，只证明 Express 服务能响应。
+
+
+## 6. 点击“开始收集”的完整调用链
+
+这是普通公开页面收集流程。它不打开登录窗口，主要依赖后端网站插件直接抓公开页面，收集完成后生成分析。
+
+### 6.1 前端按钮到 HTTP 请求
+
+用户点击“开始收集”后：
+
+```txt
+<form onSubmit={handleSubmit}>
+  -> handleSubmit(event)
+  -> event.preventDefault()
+  -> setError("")
+  -> setLoading(true)
+  -> createAnalysis({
+       companyQuery,
+       selectedSiteIds,
+       maxPages
+     })
+```
+
+`createAnalysis()` 在 `frontend/src/api.ts`：
+
+```txt
+createAnalysis(input)
+  -> request("/api/analyses", {
+       method: "POST",
+       headers: { "content-type": "application/json" },
+       body: JSON.stringify(input)
+     })
+  -> fetch("/api/analyses", init)
+```
+
+### 6.2 后端 `/api/analyses`
+
+```txt
+POST /api/analyses
+  -> parseAnalysisRequest(request.body)
+```
+
+`parseAnalysisRequest()` 做这些校验：
+
+```txt
+isRecord(body)
+  -> body 必须是普通 JSON object
+
+companyQuery
+  -> 必须是非空字符串
+
+parseSelectedSiteIds(body.selectedSiteIds)
+  -> 如果没传，默认 AVAILABLE_SITES 全部站点
+  -> 如果传了，必须是非空数组
+  -> 每个 siteId 必须存在于 AVAILABLE_SITES
+
+maxPages
+  -> 默认 1
+  -> 必须是 1 到 10 的整数
+```
+
+校验失败：
+
+```txt
+response.status(400).json({ error })
+```
+
+校验成功：
+
+```txt
+dependencies.workflow.run(validation.value)
+```
+
+这里的 `dependencies.workflow` 是启动时传入的 `MvpWorkflow` 实例。
+
+### 6.3 `MvpWorkflow.run()`
+
+文件：
+
+```txt
+backend/src/app/mvpWorkflow.ts
+```
+
+调用链：
+
+```txt
+MvpWorkflow.run(request)
+  -> repository.saveSearch(request.companyQuery)
+  -> 根据 request.selectedSiteIds 从 pluginsBySiteId 找插件
+  -> for 每个 selected plugin:
+       -> plugin.searchCompany({ query: request.companyQuery })
+       -> const bestCompany = companies[0]
+       -> plugin.fetchCompanyReviews({ company: bestCompany, maxPages })
+       -> reviews.push(...siteReviews)
+  -> repository.saveReviews(reviews)
+  -> analyzeCompany({ company, reviews, provider: aiProvider })
+  -> repository.saveAnalysis(analysis)
+  -> return { reviews, analysis }
+```
+
+### 6.4 保存搜索记录
+
+```txt
+repository.saveSearch(query)
+  -> SQLiteReviewRepository.saveSearch(query)
+  -> INSERT INTO searches (query) VALUES (?)
+  -> SELECT id, query, created_at FROM searches WHERE id = ?
+  -> mapSearchRow(row)
+```
+
+### 6.5 转职会议插件搜索公司
+
+当前唯一公开页面插件是：
+
+```txt
+TenshokuKaigiPlugin
+```
+
+搜索公司调用链：
+
+```txt
+plugin.searchCompany({ query })
+  -> query.trim()
+  -> fetchNextData("https://jobtalk.jp/companies/search?keyword=...")
+  -> fetch(url, { user-agent, redirect: "follow" })
+  -> 如果 HTTP 非 2xx，throw Error
+  -> 如果 response.url.includes("sign_in")，throw SiteLoginRequiredError
+  -> response.text()
+  -> 从 HTML 找 id="__NEXT_DATA__"
+  -> JSON.parse(...)
+  -> extractCompanySearchResults(nextData, query)
+```
+
+`extractCompanySearchResults()`：
+
+```txt
+extractCompanySearchResults(nextData, query)
+  -> findQueryData(nextData, "companies")
+  -> 取 companies.nodes
+  -> map 每家公司为 CompanySearchResult:
+       siteId
+       companyName
+       companyUrl
+       confidence = calculateCompanyConfidence(query, company)
+  -> 按 confidence 从高到低排序
+```
+
+`calculateCompanyConfidence()`：
+
+```txt
+normalizeCompanyName(query)
+normalizeCompanyName(company.name / oldCompanyName / commonlyKnownName)
+  -> 完全匹配返回 1
+  -> 公司名包含查询词返回 0.85
+  -> 查询词包含公司名返回 0.75
+  -> 其他返回 0.5
+```
+
+`MvpWorkflow.run()` 取：
+
+```txt
+bestCompany = companies[0]
+```
+
+如果没有公司候选，跳过这个插件。
+
+### 6.6 转职会议插件读取公开评论
+
+```txt
+plugin.fetchCompanyReviews({ company: bestCompany, maxPages })
+  -> parseCompanyId(company.companyUrl)
+  -> for pageNumber = 1; pageNumber <= maxPages; pageNumber++
+       -> pageUrl = "https://jobtalk.jp/companies/{companyId}/answers?page={pageNumber}"
+       -> fetchNextData(pageUrl)
+       -> extractAnswerNodes(nextData)
+       -> 如果 answers.length === 0，break
+       -> for 每条 answer:
+            -> 跳过空 review
+            -> 跳过重复 answer.id
+            -> mapAnswerToReview(answer, company.companyName, url)
+            -> reviews.push(review)
+  -> return reviews
+```
+
+`extractAnswerNodes()`：
+
+```txt
+extractAnswerNodes(nextData)
+  -> findQueryData(nextData, "companyAnswers")
+  -> answerData.pages[0].company.answers.nodes
+```
+
+`mapAnswerToReview()`：
+
+```txt
+mapAnswerToReview(answer, companyName, url)
+  -> 收集 metadata:
+       jobType
+       position
+       employmentType
+  -> mapQuestionCode(answer.question?.code)
+  -> return CompanyReview:
+       company
+       source: "転職会議"
+       reviewType
+       title
+       content
+       rating
+       postedAt
+       url
+       metadata
+```
+
+`mapQuestionCode()` 把站点栏目转换成内部评论类型：
+
+```txt
+examination -> interview
+worklife/employee/president/woman/welfare -> work-environment
+skill -> technology
+earns -> salary
+leave -> exit-reason
+其他 -> company-review
+```
+
+### 6.7 保存评论
+
+```txt
+repository.saveReviews(reviews)
+  -> SQLiteReviewRepository.saveReviews(reviews)
+  -> for 每条 review:
+       -> getOrCreateCompanyId(review.company)
+       -> INSERT INTO reviews (...)
+```
+
+`getOrCreateCompanyId()`：
+
+```txt
+normalizeCompanyName(displayName)
+  -> trim()
+  -> toLocaleLowerCase("ja-JP")
+
+SELECT id FROM companies WHERE normalized_name = ?
+  -> 如果存在，返回 id
+  -> 如果不存在:
+       INSERT INTO companies (normalized_name, display_name) VALUES (?, ?)
+       return lastInsertRowid
+```
+
+### 6.8 AI 分析
+
+```txt
+analyzeCompany({ company, reviews, provider })
+  -> buildCompanyAnalysisPrompt(company, reviews)
+  -> provider.analyze(prompt)
+  -> new Set(review.source)
+  -> return CompanyAnalysis
+```
+
+`buildCompanyAnalysisPrompt()`：
+
+```txt
+reviews.map(...)
+  -> 每条评论变成:
+       #1
+       source: ...
+       type: ...
+       title: ...
+       content: ...
+  -> 拼成固定分析任务 prompt
+```
+
+当前 provider 是：
+
+```txt
+MockAiProvider
+```
+
+调用链：
+
+```txt
+MockAiProvider.analyze(prompt)
+  -> 用 /^#\d+/gm 统计评论数量
+  -> 返回固定 mock 文本
+```
+
+注意：当前不会调用真实 OpenAI，也不会向外部 LLM 发送数据。
+
+### 6.9 保存分析
+
+```txt
+repository.saveAnalysis(analysis)
+  -> SQLiteReviewRepository.saveAnalysis(analysis)
+  -> getOrCreateCompanyId(analysis.company)
+  -> INSERT INTO analyses (...)
+```
+
+### 6.10 返回前端并刷新历史
+
+后端：
+
+```txt
+POST /api/analyses
+  -> response.status(201).json(result)
+```
+
+前端：
+
+```txt
+request(...)
+  -> response.json()
+  -> 如果 !response.ok，throw Error
+  -> return body
+
+handleSubmit()
+  -> setResult(nextResult)
+  -> getHistory()
+  -> setSearches(...)
+  -> setAnalyses(...)
+  -> setLoading(false)
+```
+
+页面展示：
+
+```txt
+result
+  -> analysis 区域显示 rawProviderOutput
+  -> reviews 区域显示评论列表
+  -> sourceOptions/useMemo 按 source 统计
+  -> reviewTypeOptions/useMemo 按 reviewType 统计
+  -> pagedReviews 分页显示
+```
+
+
+## 7. 点击“检查登录状态”的完整调用链
+
+这是桌面 App 特有流程。它只检查所选网站是否已经登录；如果没有登录，就按所选网站顺序打开登录窗口。这个按钮不采集评论、不导入数据库，也不会更新 Analysis 面板。
+
+### 7.1 前端按钮到 Electron IPC
+
+用户点击“检查登录状态”：
+
+```txt
+App.tsx
+  -> handleEnsureSiteLogins()
+  -> const siteIds = selectedSiteIds
+  -> ensureSiteLogins({ siteIds })
+```
+
+`ensureSiteLogins()` 在 `frontend/src/api.ts`：
+
+```txt
+ensureSiteLogins(input)
+  -> 检查 window.jobReviewAggregator 是否存在
+  -> window.jobReviewAggregator.ensureSiteLogins(input)
+```
+
+`desktop/preload.js`：
+
+```txt
+ensureSiteLogins(input)
+  -> ipcRenderer.invoke("ensure-site-logins", input)
+```
+
+`desktop/app.js`：
+
+```txt
+ipcMain.handle("ensure-site-logins", (_event, input) => {
+  return ensureSiteLogins(input);
+})
+```
+
+### 7.2 `ensureSiteLogins()`
+
+```txt
+ensureSiteLogins(input)
+  -> targetSites = getTargetSites(input?.siteIds ?? input?.siteId)
+  -> for 每个 site:
+       -> alreadyLoggedIn = isSiteLoggedIn(site)
+       -> 如果未登录:
+            -> openSiteLoginWindow(site)
+       -> siteResults.push({
+            siteId,
+            displayName,
+            loggedIn: true,
+            openedLoginWindow
+          })
+  -> return { siteResults }
+```
+
+`getTargetSites()` 会把前端选中的站点 ID 转成桌面端可处理的网站配置，并过滤重复 ID。这里的顺序就是前端传入的选中顺序。
+
+### 7.3 `isSiteLoggedIn()`
+
+```txt
+isSiteLoggedIn(site)
+  -> fetchSiteNextData(site.homeUrl, site)
+  -> site.parser.isLoggedIn(nextData)
+  -> 如果遇到 LoginRequiredError，返回 false
+```
+
+`fetchSiteNextData()`：
+
+```txt
+fetchSiteNextData(url, site)
+  -> session.defaultSession.fetch(url, {
+       redirect: "follow",
+       headers: { user-agent: ... }
+     })
+  -> 如果 response.ok false，throw Error
+  -> 如果 response.url.includes("sign_in")，throw LoginRequiredError
+  -> response.text()
+  -> site.parser.parseNextData(html)
+```
+
+这里使用 `session.defaultSession.fetch()`，所以读取的是 Electron 浏览器 session 里的 cookie 和登录状态。
+
+### 7.4 未登录时的登录窗口流程
+
+```txt
+openSiteLoginWindow(site)
+  -> new BrowserWindow({
+       title: `${site.displayName} 登录确认`,
+       preload: desktop/preload.js,
+       nodeIntegration: false,
+       contextIsolation: true,
+       sandbox: true
+     })
+  -> window.loadURL(site.homeUrl)
+```
+
+登录窗口事件：
+
+```txt
+window.webContents.setWindowOpenHandler(...)
+  -> 如果网页尝试打开新窗口，改为在当前窗口 loadURL(url)
+
+window.webContents.on("will-navigate")
+  -> 如果是 http/https，允许
+  -> 如果是其他协议，event.preventDefault()
+  -> shell.openExternal(url)
+
+window.webContents.on("did-finish-load")
+  -> isSitePage(site, window.webContents.getURL())
+  -> showLoginWindowStatus(window, "请在此窗口完成登录...")
+
+window.once("closed")
+  -> clearInterval(timer)
+  -> 如果还没完成，reject(new Error("登录窗口已关闭。"))
+```
+
+自动检查：
+
+```txt
+timer = setInterval(..., 3000)
+  -> isSiteLoggedIn(site)
+       -> 如果仍未登录，继续等
+       -> 如果已登录:
+            settled = true
+            clearInterval(timer)
+            resolve()
+            window.close()
+       -> 如果其他错误:
+            clearInterval(timer)
+            showLoginWindowStatus(window, error.message)
+            reject(error)
+```
+
+也就是说，用户只需要在弹出的网页里登录。登录成功后，程序每 3 秒检查一次，确认登录后自动关闭当前登录窗口，再继续检查下一个被选中的网站。
+
+### 7.5 桌面 parser 做什么
+
+当前 `site.parser` 是：
+
+```txt
+desktop/jobtalkParser.js
+```
+
+登录检查只依赖两个 parser 能力：
+
+```txt
+parseNextData(html)
+  -> 从 HTML 中找 __NEXT_DATA__
+  -> JSON.parse(...)
+
+isLoggedIn(nextData)
+  -> 找 member/pageProps.member/pageProps.currentMember
+  -> 判断是否登录
+```
+
+后续如果某个网站的登录态判断方式不同，就在对应 parser 里实现自己的 `isLoggedIn()`。
+
+### 7.6 结果回到前端
+
+```txt
+openSiteLoginWindow()
+  -> resolve()
+
+ensureSiteLogins()
+  -> return { siteResults }
+
+ipcMain.handle("ensure-site-logins")
+  -> Promise resolve
+
+preload ensureSiteLogins()
+  -> Promise resolve
+
+frontend ensureSiteLogins()
+  -> Promise resolve
+
+handleEnsureSiteLogins()
+  -> 统计 openedLoginWindow 数量
+  -> setSiteMessage(...)
+  -> setCheckingSiteLogins(false)
+```
+
+这里不会执行：
+
+```txt
+setResult(...)
+getHistory()
+POST /api/imports
+ImportedReviewWorkflow.run()
+```
+
+所以“检查登录状态”和“开始收集”是两件事：前者只准备登录状态，后者才会走公开页面收集和分析流程。
+
+### 7.7 保留的完整评论采集能力
+
+`desktop/app.js` 里仍然保留了 `collectAndImportSiteReviews()`、`collectReviewsWithLogin()`、`collectReviewsFromSite()` 和 `importSiteReviewBatch()`。这些函数用于后续真正接入“登录后完整评论采集并导入”时复用。
+
+当前页面按钮没有暴露这条链路：
+
+```txt
+collectAndImportSiteReviews()
+  -> collectReviewsWithLogin()
+  -> collectReviewsFromSite()
+  -> importSiteReviewBatch()
+  -> POST /api/imports
+  -> ImportedReviewWorkflow.run()
+```
+
+
+## 8. 设置菜单调用链
+
+设置菜单在 `App.tsx` 里只是 React 状态：
+
+```txt
+settingsOpen
+settings
+settingsMessage
+databaseConfirmText
+settingsBusy
+```
+
+### 8.1 保存 AI 配置
+
+前端：
+
+```txt
+点击“保存 AI 配置”
+  -> handleSaveSettings()
+  -> saveAppSettings(settings)
+  -> window.jobReviewAggregator.saveSettings(settings)
+```
+
+preload：
+
+```txt
+saveSettings(settings)
+  -> ipcRenderer.invoke("save-settings", settings)
+```
+
+主进程：
+
+```txt
+ipcMain.handle("save-settings", (_event, settings) => {
+  const nextSettings = sanitizeSettings(settings)
+  writeFileSync(getSettingsPath(), JSON.stringify(nextSettings, null, 2) + "\n")
+  return nextSettings
+})
+```
+
+注意：当前后端启动时仍然固定创建 `MockAiProvider`，设置文件已经保存，但还没有真正接入 OpenAI provider 的创建逻辑。
+
+### 8.2 清除登录缓存
+
+前端：
+
+```txt
+handleClearLoginCache()
+  -> clearLoginCache()
+  -> window.jobReviewAggregator.clearLoginCache()
+```
+
+主进程：
+
+```txt
+ipcMain.handle("clear-login-cache")
+  -> session.defaultSession.clearStorageData({
+       storages: [
+         "cookies",
+         "localstorage",
+         "indexdb",
+         "cachestorage",
+         "serviceworkers"
+       ]
+     })
+  -> session.defaultSession.clearCache()
+  -> return { ok: true }
+```
+
+这会让下次桌面采集重新登录。
+
+### 8.3 清除数据库
+
+前端：
+
+```txt
+handleClearDatabase()
+  -> clearDatabase(databaseConfirmText)
+  -> window.jobReviewAggregator.clearDatabase(confirmText)
+```
+
+主进程：
+
+```txt
+ipcMain.handle("clear-database", async (_event, confirmText) => {
+  if (confirmText !== "清除数据库") throw Error
+  const repository = activeRepository ?? createDevelopmentRepository()
+  if (!repository?.clearAll) throw Error
+  await repository.clearAll()
+  return { ok: true }
+})
+```
+
+`activeRepository`：
+
+- 打包版内置后端启动时由 `startIntegratedServer()` 设置。
+- 开发模式因为后端是独立 `npm run api` 启动的，Electron 里没有 activeRepository，所以会走 `createDevelopmentRepository()`，打开 `data/app.sqlite`。
+
+`SQLiteReviewRepository.clearAll()`：
+
+```txt
+DELETE FROM analyses;
+DELETE FROM reviews;
+DELETE FROM companies;
+DELETE FROM searches;
+```
+
+
+## 9. 网站选择和筛选调用链
+
+### 9.1 点击网站按钮
+
+```txt
+handleSiteClick(siteId)
+  -> setSelectedSiteIds(current =>
+       current.includes(siteId)
+         ? current.filter(currentSiteId => currentSiteId !== siteId)
+         : [...current, siteId]
+     )
+  -> setSiteMessage("检查登录状态时，应用会按已选网站依次打开登录窗口。")
+```
+
+当前逻辑是多选开关：未选中时点击会添加，已选中时点击会取消。
+
+### 9.2 结果筛选
+
+这些都在前端本地完成，不会请求后端。
+
+```txt
+useMemo sourceOptions
+  -> createCountOptions(result.reviews, review => review.source)
+
+handleSourceChange(source)
+  -> setActiveSource(source)
+  -> setActiveReviewType("all")
+  -> setReviewPage(1)
+
+useMemo sourceFilteredReviews
+  -> activeSource === "all" ? reviews : reviews.filter(...)
+
+useMemo reviewTypeOptions
+  -> createCountOptions(sourceFilteredReviews, review => review.reviewType)
+
+handleReviewTypeChange(reviewType)
+  -> setActiveReviewType(reviewType)
+  -> setReviewPage(1)
+
+useMemo filteredReviews
+  -> activeReviewType === "all" ? sourceFilteredReviews : filter(...)
+
+pagedReviews
+  -> filteredReviews.slice(...)
+```
+
+
+## 10. 后端错误处理调用链
+
+`createApiApp()` 最后注册统一错误处理中间件：
+
+```txt
+app.use((error, _request, response, _next) => {
+  if (error instanceof SiteLoginRequiredError) {
+    response.status(error.statusCode).json({ error: error.message })
+    return
+  }
+
+  console.error(error)
+  response.status(500).json({ error: "Internal server error" })
+})
+```
+
+`SiteLoginRequiredError`：
+
+```txt
+statusCode = 409
+```
+
+所以公开页面抓取如果遇到需要登录的页面，会返回 409。注意：这不是“检查登录状态”按钮能直接解决的问题，因为“开始收集”走的是后端公开页面抓取，不读取 Electron 登录窗口里的 cookie。
+
+前端请求封装：
+
+```txt
+request(url, init)
+  -> fetch(url, init)
+  -> response.json()
+  -> if !response.ok:
+       throw new Error(getErrorMessage(body))
+```
+
+前端各 handler 会 catch：
+
+```txt
+catch (error)
+  -> setError(toErrorMessage(error))
+```
+
+
+## 11. 数据库相关调用链汇总
+
+### 11.1 保存搜索
+
+```txt
+MvpWorkflow.run()
+ImportedReviewWorkflow.run()
+  -> repository.saveSearch(...)
+  -> SQLiteReviewRepository.saveSearch(...)
+  -> INSERT INTO searches
+```
+
+### 11.2 保存评论
+
+```txt
+workflow.run()
+  -> repository.saveReviews(reviews)
+  -> for 每条 review:
+       -> getOrCreateCompanyId(review.company)
+       -> INSERT INTO reviews
+```
+
+### 11.3 保存分析
+
+```txt
+workflow.run()
+  -> repository.saveAnalysis(analysis)
+  -> getOrCreateCompanyId(analysis.company)
+  -> INSERT INTO analyses
+```
+
+### 11.4 读取历史
+
+```txt
+GET /api/history/searches
+  -> repository.listSearches(limit)
+  -> SELECT searches
+
+GET /api/history/analyses
+  -> repository.listAnalyses(limit)
+  -> SELECT analyses JOIN companies
+```
+
+### 11.5 清空数据库
+
+```txt
+clearDatabase()
+  -> repository.clearAll()
+  -> DELETE analyses/reviews/companies/searches
+```
+
+
+## 12. 当前模块化扩展点
+
+如果以后新增一个网站，主要有两条线。
+
+### 12.1 后端公开页面抓取
+
+需要新增：
+
+```txt
+backend/src/sites/xxx.ts
+  -> export class XxxPlugin implements JobReviewSitePlugin
+  -> id
+  -> displayName
+  -> searchCompany(input)
+  -> fetchCompanyReviews(request)
+```
+
+然后注册：
+
+```txt
+backend/src/sites/siteRegistry.ts
+  -> import { XxxPlugin } from "./xxx"
+  -> SITE_DEFINITIONS 增加:
+       {
+         id: "xxx",
+         displayName: "...",
+         createPlugin: () => new XxxPlugin(),
+         desktopImport?: ...
+       }
+```
+
+这样会自动影响：
+
+```txt
+createSitePlugins()
+  -> MvpWorkflow 可用
+
+AVAILABLE_SITES
+  -> GET /api/sites
+  -> 前端网站列表可见
+
+parseSelectedSiteIds()
+  -> 接受这个 siteId
+```
+
+### 12.2 桌面登录状态检查
+
+如果这个网站也需要在桌面 App 里检查登录状态，需要再加：
+
+```txt
+desktop/xxxParser.js
+```
+
+登录检查至少需要这些 parser 能力：
+
+```txt
+parseNextData(html)
+isLoggedIn(data)
+```
+
+然后在 `desktop/app.js` 注册：
+
+```txt
+TARGET_REVIEW_SITES["xxx"] = {
+  id: "xxx",
+  displayName: "...",
+  baseUrl: "...",
+  homeUrl: "...",
+  parser: XxxParser
+}
+```
+
+这样“检查登录状态”调用链会变成：
+
+```txt
+App.handleEnsureSiteLogins()
+  -> ensureSiteLogins({ siteIds: ["xxx"] })
+  -> ipc "ensure-site-logins"
+  -> getTargetSites(["xxx"])
+  -> isSiteLoggedIn()
+  -> 如果未登录，openSiteLoginWindow()
+```
+
+如果后续还要把登录后完整评论导入后端，再补充完整评论解析能力：
+
+```txt
+extractCompanyCandidates(data, query)
+extractAnswerNodes(data)
+mapAnswersToReviews(answers, companyName, companyId)
+```
+
+并且在后端 `SITE_DEFINITIONS` 里配置：
+
+```txt
+desktopImport: {
+  source: "...",
+  allowedUrlHosts: ["example.com"]
+}
+```
+
+完整评论导入链路目前没有暴露给页面按钮，后续接入时可复用：
+
+```txt
+collectAndImportSiteReviews()
+  -> collectReviewsWithLogin()
+  -> collectReviewsFromSite()
+  -> importSiteReviewBatch()
+```
+
+
+## 13. 一句话版完整主链路
+
+### 13.1 程序启动
+
+```txt
+desktop/app.js
+  -> app.whenReady()
+  -> createMainWindow()
+  -> startIntegratedServer() 仅打包版
+  -> createApiApp()
+  -> BrowserWindow.loadURL()
+  -> preload exposeInMainWorld()
+  -> frontend main.tsx
+  -> App()
+  -> loadInitialData()
+  -> getSites() + getHistory()
+```
+
+### 13.2 开始收集
+
+```txt
+App.handleSubmit()
+  -> createAnalysis()
+  -> POST /api/analyses
+  -> parseAnalysisRequest()
+  -> MvpWorkflow.run()
+  -> repository.saveSearch()
+  -> plugin.searchCompany()
+  -> plugin.fetchCompanyReviews()
+  -> repository.saveReviews()
+  -> analyzeCompany()
+  -> MockAiProvider.analyze()
+  -> repository.saveAnalysis()
+  -> response 201
+  -> App.setResult()
+  -> getHistory()
+```
+
+### 13.3 检查登录状态
+
+```txt
+App.handleEnsureSiteLogins()
+  -> ensureSiteLogins()
+  -> preload ensureSiteLogins()
+  -> ipcMain "ensure-site-logins"
+  -> getTargetSites()
+  -> isSiteLoggedIn()
+  -> fetchSiteNextData()
+  -> parser.isLoggedIn()
+  -> 如果未登录，openSiteLoginWindow()
+  -> setSiteMessage()
+```
+
+### 13.4 设置和清理
+
+```txt
+保存设置:
+App.handleSaveSettings()
+  -> saveAppSettings()
+  -> ipc "save-settings"
+  -> sanitizeSettings()
+  -> writeFileSync(settings.json)
+
+清除登录:
+App.handleClearLoginCache()
+  -> clearLoginCache()
+  -> ipc "clear-login-cache"
+  -> session.clearStorageData()
+  -> session.clearCache()
+
+清除数据库:
+App.handleClearDatabase()
+  -> clearDatabase()
+  -> ipc "clear-database"
+  -> repository.clearAll()
+```

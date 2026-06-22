@@ -31,6 +31,7 @@ yarn-error.log*
 /browser-profiles
 /playwright-report
 /test-results
+/release
 
 # 暂时不提交的项目说明文档。
 /docs/architecture.md
