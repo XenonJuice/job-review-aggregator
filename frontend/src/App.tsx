@@ -5,10 +5,12 @@ import {
   Clock3,
   CircleHelp,
   Database,
+  KeyRound,
   LoaderCircle,
   Search,
   Settings,
   Sparkles,
+  X,
 } from 'lucide-react';
 import {
   AnalysisHistory,
@@ -53,6 +55,7 @@ export default function App() {
   const [activeReviewType, setActiveReviewType] = useState('all');
   const [reviewPage, setReviewPage] = useState(1);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsPanel, setSettingsPanel] = useState<'ai' | 'data'>('ai');
   const [settings, setSettings] = useState<AppSettings>(EMPTY_SETTINGS);
   const [settingsMessage, setSettingsMessage] = useState('');
   const [databaseConfirmText, setDatabaseConfirmText] = useState('');
@@ -261,132 +264,14 @@ export default function App() {
               aria-expanded={settingsOpen}
               aria-label="打开设置"
               className="settings-trigger"
-              onClick={() => setSettingsOpen((open) => !open)}
+              onClick={() => {
+                setSettingsPanel('ai');
+                setSettingsOpen(true);
+              }}
               type="button"
             >
               <Settings size={18} />
             </button>
-
-            <div className={settingsOpen ? 'settings-menu open' : 'settings-menu'}>
-              <div className="settings-section">
-                <h2>设置</h2>
-                <p>配置 AI Provider、清理登录状态或本地数据。</p>
-              </div>
-
-              <div className="settings-section">
-                <label>
-                  <span>AI Provider</span>
-                  <select
-                    value={settings.aiProvider}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        aiProvider: event.target.value,
-                      }))
-                    }
-                  >
-                    <option value="mock">Mock（当前默认）</option>
-                    <option value="openai">OpenAI</option>
-                    <option value="custom">自定义兼容接口</option>
-                  </select>
-                </label>
-                <label>
-                  <span>API Key</span>
-                  <input
-                    value={settings.apiKey}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        apiKey: event.target.value,
-                      }))
-                    }
-                    placeholder="sk-..."
-                    type="password"
-                  />
-                </label>
-                <label>
-                  <span>Base URL</span>
-                  <input
-                    value={settings.baseUrl}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        baseUrl: event.target.value,
-                      }))
-                    }
-                    placeholder="https://api.openai.com/v1"
-                  />
-                </label>
-                <label>
-                  <span>Model</span>
-                  <input
-                    value={settings.model}
-                    onChange={(event) =>
-                      setSettings((current) => ({
-                        ...current,
-                        model: event.target.value,
-                      }))
-                    }
-                    placeholder="例如：gpt-4.1-mini"
-                  />
-                </label>
-                <button
-                  className="settings-primary"
-                  disabled={settingsBusy}
-                  onClick={() => void handleSaveSettings()}
-                  type="button"
-                >
-                  保存 AI 配置
-                </button>
-              </div>
-
-              <div className="settings-section danger-zone">
-                <button
-                  className="settings-secondary"
-                  disabled={settingsBusy}
-                  onClick={() => void handleClearLoginCache()}
-                  type="button"
-                >
-                  清除登录缓存
-                </button>
-
-                <label>
-                  <span className="settings-label-with-help">
-                    输入“清除数据库”确认
-                    <span
-                      aria-label="清除数据库会删除 AI 分析后的内容，重新生成分析可能会消耗你的 AI 额度。"
-                      className="settings-help"
-                      tabIndex={0}
-                    >
-                      <CircleHelp size={14} />
-                      <span className="settings-help-tooltip" role="tooltip">
-                        当前操作会删除 AI 分析后的内容，重新生成分析可能会消耗你的 AI 额度。
-                      </span>
-                    </span>
-                  </span>
-                  <input
-                    value={databaseConfirmText}
-                    onChange={(event) => setDatabaseConfirmText(event.target.value)}
-                    placeholder="清除数据库"
-                  />
-                </label>
-                <button
-                  className="settings-danger"
-                  disabled={
-                    settingsBusy ||
-                    databaseConfirmText !== '清除数据库'
-                  }
-                  onClick={() => void handleClearDatabase()}
-                  type="button"
-                >
-                  清除数据库信息
-                </button>
-              </div>
-
-              {settingsMessage ? (
-                <p className="settings-message">{settingsMessage}</p>
-              ) : null}
-            </div>
           </div>
 
           <div className="brand">
@@ -685,6 +570,180 @@ export default function App() {
       <footer>
         数据保存在本机 SQLite 中。当前 AI 分析使用本地 Mock Provider。
       </footer>
+
+      {settingsOpen ? (
+        <div className="settings-backdrop">
+          <section
+            aria-label="设置"
+            aria-modal="true"
+            className="settings-dialog"
+            role="dialog"
+          >
+            <aside className="settings-sidebar">
+              <div className="settings-sidebar-heading">
+                <Settings size={18} />
+                <span>设置</span>
+              </div>
+              <button
+                className={settingsPanel === 'ai' ? 'active' : ''}
+                onClick={() => setSettingsPanel('ai')}
+                type="button"
+              >
+                <Sparkles size={17} />
+                <span>AI 配置</span>
+              </button>
+              <button
+                className={settingsPanel === 'data' ? 'active' : ''}
+                onClick={() => setSettingsPanel('data')}
+                type="button"
+              >
+                <Database size={17} />
+                <span>数据与登录</span>
+              </button>
+            </aside>
+
+            <div className="settings-detail">
+              <div className="settings-detail-header">
+                <div>
+                  <p className="settings-kicker">
+                    {settingsPanel === 'ai' ? 'AI Provider' : 'Storage'}
+                  </p>
+                  <h2>
+                    {settingsPanel === 'ai' ? 'AI 配置' : '数据与登录'}
+                  </h2>
+                </div>
+                <button
+                  aria-label="关闭设置"
+                  className="settings-close"
+                  onClick={() => setSettingsOpen(false)}
+                  type="button"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              {settingsPanel === 'ai' ? (
+                <div className="settings-section settings-form">
+                  <label>
+                    <span>AI Provider</span>
+                    <select
+                      value={settings.aiProvider}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          aiProvider: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="mock">Mock（当前默认）</option>
+                      <option value="openai">OpenAI</option>
+                      <option value="custom">自定义兼容接口</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span>API Key</span>
+                    <input
+                      value={settings.apiKey}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          apiKey: event.target.value,
+                        }))
+                      }
+                      placeholder="sk-..."
+                      type="password"
+                    />
+                  </label>
+                  <label>
+                    <span>Base URL</span>
+                    <input
+                      value={settings.baseUrl}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          baseUrl: event.target.value,
+                        }))
+                      }
+                      placeholder="https://api.openai.com/v1"
+                    />
+                  </label>
+                  <label>
+                    <span>Model</span>
+                    <input
+                      value={settings.model}
+                      onChange={(event) =>
+                        setSettings((current) => ({
+                          ...current,
+                          model: event.target.value,
+                        }))
+                      }
+                      placeholder="例如：gpt-4.1-mini"
+                    />
+                  </label>
+                  <button
+                    className="settings-primary"
+                    disabled={settingsBusy}
+                    onClick={() => void handleSaveSettings()}
+                    type="button"
+                  >
+                    保存 AI 配置
+                  </button>
+                </div>
+              ) : (
+                <div className="settings-section settings-form danger-zone">
+                  <button
+                    className="settings-secondary"
+                    disabled={settingsBusy}
+                    onClick={() => void handleClearLoginCache()}
+                    type="button"
+                  >
+                    <KeyRound size={17} />
+                    清除登录缓存
+                  </button>
+
+                  <label>
+                    <span className="settings-label-with-help">
+                      输入“清除数据库”确认
+                      <span
+                        aria-label="清除数据库会删除 AI 分析后的内容，重新生成分析可能会消耗你的 AI 额度。"
+                        className="settings-help"
+                        tabIndex={0}
+                      >
+                        <CircleHelp size={14} />
+                        <span className="settings-help-tooltip" role="tooltip">
+                          当前操作会删除 AI 分析后的内容，重新生成分析可能会消耗你的 AI 额度。
+                        </span>
+                      </span>
+                    </span>
+                    <input
+                      value={databaseConfirmText}
+                      onChange={(event) =>
+                        setDatabaseConfirmText(event.target.value)
+                      }
+                      placeholder="清除数据库"
+                    />
+                  </label>
+                  <button
+                    className="settings-danger"
+                    disabled={
+                      settingsBusy ||
+                      databaseConfirmText !== '清除数据库'
+                    }
+                    onClick={() => void handleClearDatabase()}
+                    type="button"
+                  >
+                    清除数据库信息
+                  </button>
+                </div>
+              )}
+
+              {settingsMessage ? (
+                <p className="settings-message">{settingsMessage}</p>
+              ) : null}
+            </div>
+          </section>
+        </div>
+      ) : null}
     </div>
   );
 }

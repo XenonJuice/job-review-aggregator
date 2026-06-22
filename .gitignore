@@ -35,6 +35,7 @@ yarn-error.log*
 
 # 暂时不提交的项目说明文档。
 /docs/architecture.md
+/docs/password
 
 # IDE 本地配置。
 .idea
