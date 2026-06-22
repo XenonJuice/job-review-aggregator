@@ -5,12 +5,14 @@ const path = require('node:path');
 const JobTalkParser = require('./jobtalkParser');
 
 const FRONTEND_URL = process.env.FRONTEND_URL;
+// todo 添加其他站点
 const TARGET_REVIEW_SITES = {
   'tenshoku-kaigi': {
     id: 'tenshoku-kaigi',
     displayName: '転職会議',
     baseUrl: 'https://jobtalk.jp',
     homeUrl: 'https://jobtalk.jp/',
+    loginCheckUrl: 'https://jobtalk.jp/companies/2513/answers?page=1',
     parser: JobTalkParser,
   },
 };
@@ -221,9 +223,10 @@ async function startIntegratedServer() {
 /**
  * 只确认所选站点的登录状态，不采集评论也不导入数据。
  * 已登录的站点会直接跳过；未登录的站点会依次打开登录窗口，等待用户完成登录。
+ * 返回 { siteResults }，每项包含站点 ID、展示名称、登录状态，以及本次是否打开过登录窗口。
  */
 async function ensureSiteLogins(input) {
-  const targetSites = getTargetSites(input?.siteIds ?? input?.siteId);
+  const targetSites = getTargetSites(input?.siteIds);
   const siteResults = [];
 
   for (const site of targetSites) {
@@ -300,13 +303,15 @@ async function collectAndImportSiteReviews(input) {
 
 async function isSiteLoggedIn(site) {
   try {
-    const nextData = await fetchSiteNextData(site.homeUrl, site);
+    const nextData = await fetchSiteNextData(
+      site.loginCheckUrl ?? site.homeUrl,
+      site,
+    );
     return site.parser.isLoggedIn(nextData);
   } catch (error) {
     if (error instanceof LoginRequiredError) {
       return false;
     }
-
     throw error;
   }
 }
@@ -619,22 +624,6 @@ async function showLoginWindowStatus(window, message) {
   `);
 }
 
-function getTargetSite(siteId) {
-  const normalizedSiteId = String(siteId ?? '').trim();
-
-  if (!normalizedSiteId) {
-    throw new Error('请选择评价网站。');
-  }
-
-  const site = TARGET_REVIEW_SITES[normalizedSiteId];
-
-  if (!site) {
-    throw new Error(`暂不支持该网站的登录状态检查：${normalizedSiteId}`);
-  }
-
-  return site;
-}
-
 /**
  * 将前端传入的站点 ID 转成本次需要采集的目标站点列表。
  * 支持单个 siteId 或 siteIds 数组；会去掉空值、去重，并校验站点是否已接入登录状态检查。
@@ -652,6 +641,18 @@ function getTargetSites(siteIds) {
   return Array.from(new Set(normalizedSiteIds)).map((siteId) =>
     getTargetSite(siteId),
   );
+}
+
+function getTargetSite(siteId) {
+  const normalizedSiteId = String(siteId ?? '').trim();
+  if (!normalizedSiteId) {
+    throw new Error('请选择评价网站。');
+  }
+  const site = TARGET_REVIEW_SITES[normalizedSiteId];
+  if (!site) {
+    throw new Error(`暂不支持该网站的登录状态检查：${normalizedSiteId}`);
+  }
+  return site;
 }
 
 async function importSiteReviewBatch(payload) {
