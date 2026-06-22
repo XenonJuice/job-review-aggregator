@@ -1,4 +1,4 @@
-// 站点 ID 是插件系统的稳定标识，后续新增网站时优先扩展这里。
+// 站点 ID 是站点配置的稳定标识，后续新增网站时优先扩展这里。
 export type SiteId =
   | 'tenshoku-kaigi'
   | 'openwork'
@@ -17,26 +17,6 @@ export type ReviewType =
   | 'foreigner'
   | 'salary'
   | 'exit-reason';
-
-// 前端网站选择列表使用的配置项。
-export interface SiteConfig {
-  id: SiteId;
-  displayName: string;
-  enabled: boolean;
-}
-
-// 统一搜索框提交给后端的最小输入。
-export interface CompanySearchInput {
-  query: string;
-}
-
-// 每个站点插件搜索公司后返回的候选结果。
-export interface CompanySearchResult {
-  siteId: SiteId;
-  companyName: string;
-  companyUrl: string;
-  confidence: number;
-}
 
 // 评分字段按内部维度保存，缺失项保持 undefined。
 export interface ReviewRating {
@@ -71,4 +51,10 @@ export interface CompanyAnalysis {
   foreignerPerspective: string;
   preparationAdvice: string;
   rawProviderOutput: string;
+}
+
+// 评论采集/导入完成后返回给前端的标准分析结果。
+export interface CompanyReviewAnalysisResult {
+  reviews: CompanyReview[];
+  analysis: CompanyAnalysis;
 }

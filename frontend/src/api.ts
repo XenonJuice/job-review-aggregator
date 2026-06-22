@@ -41,12 +41,14 @@ export interface AnalysisHistory {
   summary: string;
 }
 
-export interface SiteLoginResult {
+export interface SiteImportResult extends AnalysisResult {
+  company: string;
+  reviewCount: number;
   siteResults: Array<{
     siteId: SiteId;
     displayName: string;
-    loggedIn: boolean;
-    openedLoginWindow: boolean;
+    company: string;
+    reviewCount: number;
   }>;
 }
 
@@ -58,9 +60,11 @@ export interface AppSettings {
 }
 
 export interface AppBridge {
-  ensureSiteLogins(input: {
+  collectAndImportSiteReviews(input: {
+    companyQuery: string;
     siteIds: SiteId[];
-  }): Promise<SiteLoginResult>;
+    maxPages: number;
+  }): Promise<SiteImportResult>;
   getSettings(): Promise<AppSettings>;
   saveSettings(settings: AppSettings): Promise<AppSettings>;
   clearLoginCache(): Promise<{ ok: true }>;
@@ -74,14 +78,16 @@ declare global {
   }
 }
 
-export async function ensureSiteLogins(input: {
+export async function collectAndImportSiteReviews(input: {
+  companyQuery: string;
   siteIds: SiteId[];
-}): Promise<SiteLoginResult> {
+  maxPages: number;
+}): Promise<SiteImportResult> {
   if (!window.jobReviewAggregator) {
     throw new Error('应用桥接未初始化，请重新打开应用。');
   }
 
-  return window.jobReviewAggregator.ensureSiteLogins(input);
+  return window.jobReviewAggregator.collectAndImportSiteReviews(input);
 }
 
 export async function getAppSettings(): Promise<AppSettings> {
@@ -121,19 +127,6 @@ export async function clearDatabase(confirmText: string): Promise<void> {
 export async function getSites(): Promise<Site[]> {
   const result = await request<{ sites: Site[] }>('/api/sites');
   return result.sites;
-}
-
-// 请求本机后台按所选站点收集公开页面评论，并生成本地分析结果。
-export async function createAnalysis(input: {
-  companyQuery: string;
-  selectedSiteIds: SiteId[];
-  maxPages: number;
-}): Promise<AnalysisResult> {
-  return request<AnalysisResult>('/api/analyses', {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify(input),
-  });
 }
 
 export async function getHistory(): Promise<{

@@ -80,14 +80,14 @@ function registerAppLifecycleHandlers() {
 /**
  * 注册渲染进程可调用的 IPC 处理器。
  * IPC 处理器是 Electron 主进程里“接收前端请求并执行对应操作”的函数。
- * - ensure-site-logins：按传入的 siteIds 依次确认站点登录状态
+ * - collect-and-import-site-reviews：登录后采集完整评论并导入本地后台
  * - get-settings / save-settings：读取和保存本地设置
  * - clear-login-cache：清除 Electron 会话中的登录缓存
  * - clear-database：校验确认文本后清空本地数据库
  */
 function registerIpcHandlers() {
-  ipcMain.handle('ensure-site-logins', (_event, input) => {
-    return ensureSiteLogins(input);
+  ipcMain.handle('collect-and-import-site-reviews', (_event, input) => {
+    return collectAndImportSiteReviews(input);
   });
 
   ipcMain.handle('get-settings', () => {
@@ -162,9 +162,7 @@ async function createMainWindow() {
 async function startIntegratedServer() {
   const { MockAiProvider } = require('../dist/backend/ai/providers/mockAiProvider');
   const { ImportedReviewWorkflow } = require('../dist/backend/app/importedReviewWorkflow');
-  const { MvpWorkflow } = require('../dist/backend/app/mvpWorkflow');
   const { createApiApp } = require('../dist/backend/server/app');
-  const { createSitePlugins } = require('../dist/backend/sites/siteRegistry');
   const {
     SQLiteReviewRepository,
   } = require('../dist/backend/storage/sqliteRepository');
@@ -179,11 +177,6 @@ async function startIntegratedServer() {
   activeRepository = repository;
 
   const aiProvider = new MockAiProvider();
-  const workflow = new MvpWorkflow(
-    createSitePlugins(),
-    repository,
-    aiProvider,
-  );
   const importedReviewWorkflow = new ImportedReviewWorkflow(
     repository,
     aiProvider,
@@ -191,7 +184,6 @@ async function startIntegratedServer() {
 
   server.use(
     createApiApp({
-      workflow,
       importedReviewWorkflow,
       repository,
     }),
@@ -216,40 +208,12 @@ async function startIntegratedServer() {
 }
 
 /**
- * 只确认所选站点的登录状态，不采集评论也不导入数据。
- * 已登录的站点会直接跳过；未登录的站点会依次打开登录窗口，等待用户完成登录。
- * 返回 { siteResults }，每项包含站点 ID、展示名称、登录状态，以及本次是否打开过登录窗口。
- */
-async function ensureSiteLogins(input) {
-  const targetSites = getTargetSites(input?.siteIds);
-  const siteResults = [];
-
-  for (const site of targetSites) {
-    const alreadyLoggedIn = await isSiteLoggedIn(site);
-
-    if (!alreadyLoggedIn) {
-      await openSiteLoginWindow(site);
-    }
-
-    siteResults.push({
-      siteId: site.id,
-      displayName: site.displayName,
-      loggedIn: true,
-      openedLoginWindow: !alreadyLoggedIn,
-    });
-  }
-
-  return { siteResults };
-}
-
-/**
  * 按前端传入的站点列表采集登录后完整评论，并统一导入本地后台。
- * 当前没有暴露给页面按钮；保留给后续真正接入“登录后完整评论采集”时复用。
  * 每个站点会先尝试复用已有登录状态；未登录时交给 collectReviewsWithLogin 打开登录窗口。
  * 返回值包含合并后的评论、分析结果，以及各站点本次采集到的评论数量。
  */
 async function collectAndImportSiteReviews(input) {
-  const targetSites = getTargetSites(input?.siteIds ?? input?.siteId);
+  const targetSites = getTargetSites(input?.siteIds);
   const companyQuery = String(input?.companyQuery ?? '').trim();
   const maxPages = Number(input?.maxPages ?? 1);
 
@@ -296,141 +260,6 @@ async function collectAndImportSiteReviews(input) {
   };
 }
 
-async function isSiteLoggedIn(site) {
-  try {
-    const nextData = await fetchSiteNextData(
-      site.loginCheckUrl,
-      site,
-    );
-    return site.parser.isLoggedIn(nextData);
-  } catch (error) {
-    if (error instanceof LoginRequiredError) {
-      return false;
-    }
-    throw error;
-  }
-}
-
-async function openSiteLoginWindow(site) {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    let loginDetected = false;
-    let visitedLoginPage = false;
-    const window = createLoginWindow(`${site.displayName} 登录确认`);
-
-    let closeTimer;
-    let timer;
-    const resolveLogin = () => {
-      if (settled) {
-        return;
-      }
-
-      settled = true;
-      if (timer) {
-        clearInterval(timer);
-      }
-      if (closeTimer) {
-        clearTimeout(closeTimer);
-      }
-      resolve();
-      if (!window.isDestroyed()) {
-        window.close();
-      }
-    };
-    const completeLogin = async () => {
-      if (loginDetected || settled) {
-        return;
-      }
-
-      loginDetected = true;
-      if (timer) {
-        clearInterval(timer);
-      }
-      await showLoginWindowStatus(
-        window,
-        `${site.displayName}登录成功。此窗口将在 3 秒后自动关闭。`,
-      ).catch(() => undefined);
-      closeTimer = setTimeout(resolveLogin, LOGIN_SUCCESS_CLOSE_DELAY_MS);
-    };
-
-    const checkLoginStatus = () => {
-      isSiteLoggedIn(site)
-        .then((loggedIn) => {
-          if (loggedIn) {
-            void completeLogin();
-          }
-        })
-        .catch((error) => {
-          if (loginDetected) {
-            return;
-          }
-
-          if (timer) {
-            clearInterval(timer);
-          }
-          if (closeTimer) {
-            clearTimeout(closeTimer);
-          }
-          void showLoginWindowStatus(
-            window,
-            error instanceof Error ? error.message : String(error),
-          );
-          settled = true;
-          reject(error);
-        });
-    };
-
-    window.webContents.on('did-finish-load', () => {
-      const currentUrl = window.webContents.getURL();
-
-      if (currentUrl.includes('sign_in')) {
-        visitedLoginPage = true;
-      }
-
-      if (
-        visitedLoginPage &&
-        isSitePage(site, currentUrl) &&
-        !currentUrl.includes('sign_in')
-      ) {
-        void completeLogin();
-        return;
-      }
-
-      if (!loginDetected && isSitePage(site, currentUrl)) {
-        void showLoginWindowStatus(
-          window,
-          `请在此窗口完成${site.displayName}登录。登录完成后会自动继续检查下一个网站。`,
-        );
-      }
-
-      checkLoginStatus();
-    });
-
-    timer = setInterval(checkLoginStatus, LOGIN_CHECK_INTERVAL_MS);
-
-    window.once('closed', () => {
-      clearInterval(timer);
-      if (closeTimer) {
-        clearTimeout(closeTimer);
-      }
-      if (loginDetected) {
-        resolveLogin();
-        return;
-      }
-      if (!settled) {
-        reject(new Error('登录窗口已关闭。'));
-      }
-    });
-
-    void window.loadURL(site.homeUrl).catch((error) => {
-      if (!isNavigationAbort(error)) {
-        settled = true;
-        reject(error);
-      }
-    });
-  });
-}
-
 /**
  * 采集单个站点的登录后完整评论。
  * 先直接使用当前 Electron session 里的登录状态采集；如果站点要求登录，
@@ -448,10 +277,44 @@ async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
 
   return new Promise((resolve, reject) => {
     let settled = false;
+    let collectionCompleted = false;
+    let completedResult;
     const window = createLoginWindow(`${site.displayName} 登录读取`);
+    let closeTimer;
+
+    const resolveCollection = () => {
+      if (settled || !completedResult) {
+        return;
+      }
+
+      settled = true;
+      clearInterval(timer);
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+      }
+      resolve(completedResult);
+      if (!window.isDestroyed()) {
+        window.close();
+      }
+    };
+
+    const completeCollection = async (result) => {
+      if (collectionCompleted || settled) {
+        return;
+      }
+
+      collectionCompleted = true;
+      completedResult = result;
+      clearInterval(timer);
+      await showLoginWindowStatus(
+        window,
+        `${site.displayName}登录成功，评论读取完成。此窗口将在 3 秒后自动关闭。`,
+      ).catch(() => undefined);
+      closeTimer = setTimeout(resolveCollection, LOGIN_SUCCESS_CLOSE_DELAY_MS);
+    };
 
     window.webContents.on('did-finish-load', () => {
-      if (isSitePage(site, window.webContents.getURL())) {
+      if (!collectionCompleted && isSitePage(site, window.webContents.getURL())) {
         // 登录提示使用当前站点 displayName，避免新增网站时残留硬编码文案。
         void showLoginWindowStatus(
           window,
@@ -463,17 +326,21 @@ async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
     const timer = setInterval(() => {
       collectReviewsFromSite({ site, companyQuery, maxPages })
         .then((result) => {
-          settled = true;
-          clearInterval(timer);
-          resolve(result);
-          window.close();
+          void completeCollection(result);
         })
         .catch((error) => {
+          if (collectionCompleted) {
+            return;
+          }
+
           if (error instanceof LoginRequiredError) {
             return;
           }
 
           clearInterval(timer);
+          if (closeTimer) {
+            clearTimeout(closeTimer);
+          }
           void showLoginWindowStatus(
             window,
             error instanceof Error ? error.message : String(error),
@@ -485,6 +352,13 @@ async function collectReviewsWithLogin({ site, companyQuery, maxPages }) {
 
     window.once('closed', () => {
       clearInterval(timer);
+      if (closeTimer) {
+        clearTimeout(closeTimer);
+      }
+      if (collectionCompleted) {
+        resolveCollection();
+        return;
+      }
       if (!settled) {
         reject(new Error('采集窗口已关闭。'));
       }

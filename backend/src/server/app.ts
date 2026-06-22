@@ -1,11 +1,11 @@
 import cors from 'cors';
 import express, { NextFunction, Request, Response } from 'express';
-import {
-  MvpWorkflowRequest,
-  MvpWorkflowResult,
-} from '../app/mvpWorkflow';
 import { ImportedReviewWorkflowRequest } from '../app/importedReviewWorkflow';
-import { CompanyReview, ReviewType, SiteId } from '../domain/types';
+import {
+  CompanyReview,
+  CompanyReviewAnalysisResult,
+  ReviewType,
+} from '../domain/types';
 import { AVAILABLE_SITES } from '../sites/availableSites';
 import { SiteLoginRequiredError } from '../sites/siteErrors';
 import {
@@ -14,18 +14,13 @@ import {
 } from '../sites/siteRegistry';
 import { ReviewRepository } from '../storage/repository';
 
-interface WorkflowRunner {
-  run(request: MvpWorkflowRequest): Promise<MvpWorkflowResult>;
-}
-
 interface ImportedReviewWorkflowRunner {
-  run(request: ImportedReviewWorkflowRequest): Promise<MvpWorkflowResult>;
+  run(request: ImportedReviewWorkflowRequest): Promise<CompanyReviewAnalysisResult>;
 }
 
 // createApiApp 不自己创建数据库和业务流程，而是从外面接收依赖。
-// 这样测试时可以传假的 workflow，桌面 App 运行时可以传真实 SQLite workflow。
+// 这样测试时可以传假的导入 workflow，桌面 App 运行时可以传真实 SQLite workflow。
 export interface ApiDependencies {
-  workflow: WorkflowRunner;
   importedReviewWorkflow: ImportedReviewWorkflowRunner;
   repository: ReviewRepository;
 }
@@ -45,19 +40,6 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
   // 前台的网站选项从这里拿，避免前台写死网站名称。
   app.get('/api/sites', (_request, response) => {
     response.json({ sites: AVAILABLE_SITES });
-  });
-
-  // 普通分析入口：前台提交公司名、网站、页数，后台负责抓取公开评论并分析。
-  app.post('/api/analyses', async (request, response) => {
-    const validation = parseAnalysisRequest(request.body);
-
-    if (!validation.ok) {
-      response.status(400).json({ error: validation.error });
-      return;
-    }
-
-    const result = await dependencies.workflow.run(validation.value);
-    response.status(201).json(result);
   });
 
   // 采集器读取多个站点的完整评论后，统一导入本地数据库并生成一份合并分析。
@@ -115,10 +97,6 @@ export function createApiApp(dependencies: ApiDependencies): express.Express {
   return app;
 }
 
-type AnalysisRequestValidation =
-  | { ok: true; value: MvpWorkflowRequest }
-  | { ok: false; error: string };
-
 type ImportedReviewsValidation =
   | { ok: true; value: ImportedReviewWorkflowRequest }
   | { ok: false; error: string };
@@ -132,49 +110,6 @@ const REVIEW_TYPES = new Set<ReviewType>([
   'salary',
   'exit-reason',
 ]);
-
-// 校验“开始收集”接口的请求体，把不可信的前台输入整理成业务层能用的数据。
-function parseAnalysisRequest(body: unknown): AnalysisRequestValidation {
-  if (!isRecord(body)) {
-    return { ok: false, error: 'Request body must be a JSON object' };
-  }
-
-  const companyQuery =
-    typeof body.companyQuery === 'string' ? body.companyQuery.trim() : '';
-
-  if (!companyQuery) {
-    return { ok: false, error: 'companyQuery is required' };
-  }
-
-  const selectedSiteIds = parseSelectedSiteIds(body.selectedSiteIds);
-
-  if (!selectedSiteIds) {
-    return {
-      ok: false,
-      error: 'selectedSiteIds contains an unsupported site',
-    };
-  }
-
-  const maxPages = body.maxPages ?? 1;
-
-  if (
-    typeof maxPages !== 'number' ||
-    !Number.isInteger(maxPages) ||
-    maxPages < 1 ||
-    maxPages > 10
-  ) {
-    return { ok: false, error: 'maxPages must be an integer from 1 to 10' };
-  }
-
-  return {
-    ok: true,
-    value: {
-      companyQuery,
-      selectedSiteIds,
-      maxPages,
-    },
-  };
-}
 
 // 校验登录采集器导入的完整评论，防止无效数据直接写进数据库。
 function parseImportedReviewsRequest(
@@ -414,32 +349,6 @@ function isAllowedHostname(
     (allowedHost) =>
       hostname === allowedHost || hostname.endsWith(`.${allowedHost}`),
   );
-}
-
-// 如果前台没有传网站，默认使用当前登记的全部网站；传了就必须是支持的网站。
-function parseSelectedSiteIds(value: unknown): SiteId[] | undefined {
-  if (value === undefined) {
-    return AVAILABLE_SITES.map((site) => site.id);
-  }
-
-  if (!Array.isArray(value) || value.length === 0) {
-    return undefined;
-  }
-
-  const availableSiteIds = new Set<string>(
-    AVAILABLE_SITES.map((site) => site.id),
-  );
-
-  if (
-    !value.every(
-      (siteId): siteId is SiteId =>
-        typeof siteId === 'string' && availableSiteIds.has(siteId),
-    )
-  ) {
-    return undefined;
-  }
-
-  return value;
 }
 
 // 历史记录 limit 做上下限保护，避免一次读太多。

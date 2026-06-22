@@ -1,7 +1,6 @@
 import { AiProvider, analyzeCompany } from '../ai/provider';
-import { CompanyReview } from '../domain/types';
+import { CompanyReview, CompanyReviewAnalysisResult } from '../domain/types';
 import { ReviewRepository } from '../storage/repository';
-import { MvpWorkflowResult } from './mvpWorkflow';
 
 export interface ImportedReviewWorkflowRequest {
   company: string;
@@ -17,7 +16,7 @@ export class ImportedReviewWorkflow {
 
   async run(
     request: ImportedReviewWorkflowRequest,
-  ): Promise<MvpWorkflowResult> {
+  ): Promise<CompanyReviewAnalysisResult> {
     await this.repository.saveSearch(request.company);
     await this.repository.saveReviews(request.reviews);
 

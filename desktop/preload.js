@@ -5,8 +5,8 @@ const { contextBridge, ipcRenderer } = require('electron');
  * */
 
 contextBridge.exposeInMainWorld('jobReviewAggregator', {
-  ensureSiteLogins(input) {
-    return ipcRenderer.invoke('ensure-site-logins', input);
+  collectAndImportSiteReviews(input) {
+    return ipcRenderer.invoke('collect-and-import-site-reviews', input);
   },
   getSettings() {
     return ipcRenderer.invoke('get-settings');

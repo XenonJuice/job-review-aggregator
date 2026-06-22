@@ -503,12 +503,6 @@ main {
   object-fit: contain;
 }
 
-.site-message {
-  margin: 8px 0 0;
-  color: #477267;
-  font-size: 11px;
-}
-
 .page-field select {
   width: 100%;
   padding: 10px 12px;
@@ -532,32 +526,6 @@ main {
   border-radius: 13px;
   font-weight: 700;
   transition: transform 160ms ease, background 160ms ease;
-}
-
-.secondary-button {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  width: 100%;
-  margin-top: 10px;
-  padding: 13px;
-  color: #173c35;
-  background: #e9f1ed;
-  border: 1px solid #9ab8af;
-  border-radius: 13px;
-  font-weight: 700;
-  transition: transform 160ms ease, background 160ms ease;
-}
-
-.secondary-button:hover:not(:disabled) {
-  background: #dcebe5;
-  transform: translateY(-1px);
-}
-
-.secondary-button:disabled {
-  cursor: not-allowed;
-  opacity: 0.55;
 }
 
 .primary-button:hover:not(:disabled) {

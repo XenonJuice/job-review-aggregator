@@ -4,7 +4,7 @@ const LOGIN_WINDOW_WIDTH = 1280;
 // 登录窗口默认高度，给登录表单和右下角状态提示留出空间。
 const LOGIN_WINDOW_HEIGHT = 900;
 
-// 检查登录状态或重试采集评论的轮询间隔。
+// 登录后重试采集评论的轮询间隔。
 const LOGIN_CHECK_INTERVAL_MS = 3_000;
 
 // 登录成功提示显示多久后自动关闭登录窗口。

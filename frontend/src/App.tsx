@@ -18,8 +18,7 @@ import {
   AppSettings,
   clearDatabase,
   clearLoginCache,
-  createAnalysis,
-  ensureSiteLogins,
+  collectAndImportSiteReviews,
   getAppSettings,
   getHistory,
   getSites,
@@ -50,7 +49,6 @@ export default function App() {
   const [searches, setSearches] = useState<SearchHistory[]>([]);
   const [analyses, setAnalyses] = useState<AnalysisHistory[]>([]);
   const [loading, setLoading] = useState(false);
-  const [checkingSiteLogins, setCheckingSiteLogins] = useState(false);
   const [activeSource, setActiveSource] = useState('all');
   const [activeReviewType, setActiveReviewType] = useState('all');
   const [reviewPage, setReviewPage] = useState(1);
@@ -60,7 +58,6 @@ export default function App() {
   const [settingsMessage, setSettingsMessage] = useState('');
   const [databaseConfirmText, setDatabaseConfirmText] = useState('');
   const [settingsBusy, setSettingsBusy] = useState(false);
-  const [siteMessage, setSiteMessage] = useState('');
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -151,9 +148,9 @@ export default function App() {
     setLoading(true);
 
     try {
-      const nextResult = await createAnalysis({
+      const nextResult = await collectAndImportSiteReviews({
         companyQuery,
-        selectedSiteIds,
+        siteIds: selectedSiteIds,
         maxPages,
       });
       setResult(nextResult);
@@ -174,39 +171,6 @@ export default function App() {
         ? current.filter((currentSiteId) => currentSiteId !== siteId)
         : [...current, siteId],
     );
-    setSiteMessage('检查登录状态时，应用会按已选网站依次打开登录窗口。');
-  }
-
-  async function handleEnsureSiteLogins() {
-    setError('');
-    setSiteMessage('');
-    setCheckingSiteLogins(true);
-
-    try {
-      const siteIds = selectedSiteIds;
-
-      if (siteIds.length === 0) {
-        throw new Error('请至少选择一个评价网站。');
-      }
-
-      const loginResult = await ensureSiteLogins({
-        siteIds,
-      });
-      const loginWindowCount = loginResult.siteResults.filter(
-        (siteResult) => siteResult.openedLoginWindow,
-      ).length;
-      const checkedSiteCount = loginResult.siteResults.length;
-
-      setSiteMessage(
-        loginWindowCount > 0
-          ? `已完成 ${loginWindowCount} 个网站登录，${checkedSiteCount} 个已选网站可继续收集。`
-          : `已确认 ${checkedSiteCount} 个已选网站均处于登录状态。`,
-      );
-    } catch (loginError) {
-      setError(toErrorMessage(loginError));
-    } finally {
-      setCheckingSiteLogins(false);
-    }
   }
 
   async function handleSaveSettings() {
@@ -327,9 +291,6 @@ export default function App() {
                     />
                   ))}
                 </div>
-                {siteMessage ? (
-                  <p className="site-message">{siteMessage}</p>
-                ) : null}
               </div>
 
               <label className="page-field">
@@ -351,7 +312,6 @@ export default function App() {
               className="primary-button"
               disabled={
                 loading ||
-                checkingSiteLogins ||
                 companyQuery.trim().length === 0 ||
                 selectedSiteIds.length === 0
               }
@@ -365,28 +325,6 @@ export default function App() {
               ) : (
                 <>
                   开始收集
-                  <ArrowRight size={19} />
-                </>
-              )}
-            </button>
-            <button
-              className="secondary-button"
-              disabled={
-                checkingSiteLogins ||
-                loading ||
-                selectedSiteIds.length === 0
-              }
-              onClick={() => void handleEnsureSiteLogins()}
-              type="button"
-            >
-              {checkingSiteLogins ? (
-                <>
-                  <LoaderCircle className="spin" size={19} />
-                  正在检查登录
-                </>
-              ) : (
-                <>
-                  检查登录状态
                   <ArrowRight size={19} />
                 </>
               )}
